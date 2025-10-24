@@ -1,0 +1,14 @@
+{% extends "admin/index.html" %}
+{% load static %}
+
+{% block content %}
+<div style="margin-bottom: 20px; text-align: center;">
+    <a href="/admin/llm/messages-interface/" 
+       style="background: #417690; color: white; padding: 12px 24px; border-radius: 4px; text-decoration: none; font-size: 16px; display: inline-block;">
+        Messages Interface
+    </a>
+</div>
+{{ block.super }}
+{% endblock %}
+
+

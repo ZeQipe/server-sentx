@@ -3,4 +3,4 @@ from django.apps import AppConfig
 
 class UsagelimitsConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
-    name = 'usageLimits'
+    name = 'apps.usageLimits'

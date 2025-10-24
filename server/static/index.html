@@ -1,0 +1,1529 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Django administration</title>
+    <style>
+      :root {
+        --secondary: #417690;
+        --header-bg: var(--secondary);
+        --accent: #f5dd5d;
+        --primary: #264b5d;
+        --breadcrumbs-bg: var(--primary);
+        --primary-fg: #f7f7f7;
+        --selected-row: #00363a;
+        --body-bg: #121212;
+        --darkened-bg: #212121;
+        --hairline-color: #404040;
+        --link-fg: #81d4fa;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        text-decoration: none;
+        list-style: none;
+        font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto,
+          Helvetica, Arial, sans-serif;
+        line-height: 1.4;
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+      }
+
+      /* Сброс браузерных стилей кнопок */
+      button {
+        background: none;
+        border: none;
+        padding: 0;
+        color: inherit;
+        font: inherit;
+        line-height: inherit;
+        text-align: inherit;
+        outline: none;
+        cursor: pointer;
+      }
+
+      /* Вернём видимость чекбоксов после глобального appearance: none */
+      input[type="checkbox"] {
+        -webkit-appearance: checkbox;
+        -moz-appearance: checkbox;
+        appearance: checkbox;
+      }
+
+      html,
+      body {
+        max-height: 100vh;
+        overflow: auto;
+      }
+
+      .page {
+        color: #ffffff;
+        background: var(--body-bg);
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      /* ===== Header ===== */
+      .header {
+        background: var(--header-bg);
+        padding: 10px 40px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .header__title {
+        font-size: 1.5rem;
+        font-weight: 300;
+        color: var(--accent);
+      }
+      .header__user {
+        font-size: 1.5rem;
+        font-weight: 300;
+        color: var(--accent);
+      }
+
+      /* ===== Breadcrumbs ===== */
+      .breadcrumbs {
+        background: var(--breadcrumbs-bg);
+        padding: 10px 40px;
+        color: #ffffff;
+        font-size: 0.875rem;
+      }
+      .breadcrumbs__link {
+        color: #4a90e2;
+        text-decoration: none;
+      }
+
+      /* ===== Layout ===== */
+      .layout {
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        grid-template-rows: 1fr;
+        overflow: auto;
+      }
+
+      .layout__sidebar {
+        background: var(--body-bg);
+        padding: 16px 0;
+        overflow: auto;
+      }
+
+      .layout__main {
+        background: var(--body-bg);
+        padding: 20px;
+        overflow: auto;
+      }
+
+      /* ===== Sidebar ===== */
+      .sidebar__search {
+        padding: 0 16px 16px;
+      }
+      .sidebar__input {
+        width: 100%;
+        padding: 8px 12px;
+        background: #202020;
+        border: 1px solid #404040;
+        border-radius: 4px;
+        color: #ffffff;
+        font-size: 14px;
+        box-sizing: border-box;
+      }
+      .sidebar__input::placeholder {
+        color: #9ca3af;
+      }
+
+      .sidebar__section {
+        margin-bottom: 24px;
+      }
+      .sidebar__section-title {
+        background: var(--header-bg);
+        color: var(--primary-fg);
+        font-size: 12px;
+        font-weight: 400;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        padding: 8px;
+        margin: 0;
+      }
+      .sidebar__list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .sidebar__item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 16px;
+        color: #ffffff;
+        font-size: 14px;
+        cursor: pointer;
+        transition: background 0.2s;
+        border-bottom: 1px solid var(--hairline-color);
+      }
+      .sidebar__item a:first-child {
+        color: var(--link-fg);
+        font-weight: 500;
+        text-align: left;
+      }
+      .sidebar__item--active {
+        background: var(--selected-row);
+      }
+      .sidebar__item:nth-child(even) {
+        background: var(--darkened-bg);
+      }
+      .sidebar__add {
+        color: #4a90e2;
+        text-decoration: none;
+        font-size: 0.8125rem;
+        line-height: 1rem;
+      }
+      .sidebar__add::before {
+        content: "+";
+        color: #00ff00;
+        margin-right: 4px;
+      }
+
+      /* ===== Main Content ===== */
+      .main__title {
+        font-size: 20px;
+        font-weight: 600;
+        color: #ffffff;
+        margin: 0 0 20px;
+      }
+
+      .main__search {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+      .main__search-group {
+        flex: 1;
+        display: flex;
+        gap: 8px;
+      }
+      .main__search-input {
+        flex: 1;
+        padding: 8px 12px;
+        background: #2a2a2a;
+        border: 1px solid #404040;
+        border-radius: 4px;
+        color: #ffffff;
+        font-size: 14px;
+      }
+      .main__search-btn {
+        padding: 8px 16px;
+        background: #4a90e2;
+        border: none;
+        border-radius: 4px;
+        color: #ffffff;
+        font-size: 14px;
+        cursor: pointer;
+        transition: all 0.2s;
+        outline: 2px solid transparent;
+      }
+      .main__search-btn:hover {
+        background: #357abd;
+      }
+      .main__search-btn:focus,
+      .main__search-btn:active {
+        outline: 2px solid white;
+        outline-offset: 2px;
+      }
+
+      .main__filters {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+      }
+      .date__filter {
+        color: #ffffff;
+        text-decoration: none;
+        font-size: 14px;
+        padding: 4px 8px;
+        border-radius: 4px;
+      }
+
+      .date__filter[data-active="true"] {
+        background: #4a90e2;
+      }
+
+      /* .date__filter--active {
+        background: #4a90e2;
+      } */
+
+      .main__actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 16px;
+        padding: 12px;
+        background: #2a2a2a;
+        border-radius: 4px;
+      }
+      .main__action-label {
+        color: #ffffff;
+        font-size: 14px;
+      }
+      .main__action-select {
+        background: #202020;
+        border: 1px solid #404040;
+        border-radius: 4px;
+        color: #ffffff;
+        padding: 4px 8px;
+        font-size: 14px;
+      }
+      .main__action-btn {
+        padding: 4px 12px;
+        background: #4a90e2;
+        border: none;
+        border-radius: 4px;
+        color: #ffffff;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      .main__selection {
+        color: #ffffff;
+        font-size: 14px;
+      }
+
+      /* ===== Table ===== */
+      .table {
+        width: 100%;
+        border-collapse: collapse;
+        background: var(--body-bg);
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      .table__header {
+        background: var(--darkened-bg);
+        color: #ffffff;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 12px;
+        letter-spacing: 0.5px;
+        width: 100%;
+      }
+      .table__header-cell {
+        padding: 12px 16px;
+        text-align: left;
+      }
+      .table__row {
+        border-bottom: 1px solid #404040;
+        transition: background 0.2s;
+      }
+      .table__row:hover {
+        background: #404040;
+      }
+      tbody .table__row:nth-child(even) {
+        background: var(--darkened-bg);
+      }
+      .table__cell {
+        padding: 12px 16px;
+        color: #ffffff;
+        font-size: 14px;
+      }
+      .table__checkbox {
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
+      }
+      .table__checkbox--select-all {
+        margin: 0;
+      }
+      .table__uid {
+        color: #4a90e2;
+        font-family: monospace;
+        font-size: 13px;
+      }
+      .table__email {
+        color: #ffffff;
+      }
+
+      /* ===== Chat ===== */
+      .chat {
+        display: grid;
+        grid-template-rows: 1fr;
+        gap: 12px;
+        width: 100%;
+        max-height: 500px;
+        overflow: auto;
+        background: #1a1a1a;
+        border: 1px solid var(--hairline-color);
+        border-radius: 8px;
+        padding: 12px;
+      }
+      .chat__messages {
+        overflow: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .chat__message {
+        display: flex;
+        width: 100%;
+      }
+      .chat__message--user {
+        justify-content: flex-end;
+      }
+      .chat__message--assistant {
+        justify-content: flex-start;
+      }
+      .chat__bubble {
+        max-width: 70%;
+        padding: 8px 12px;
+        border-radius: 12px;
+        line-height: 1.4;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 14px;
+      }
+      .chat__message--user .chat__bubble {
+        background: #2d5a96;
+        color: #ffffff;
+        border-top-right-radius: 4px;
+      }
+      .chat__message--assistant .chat__bubble {
+        background: #2a2a2a;
+        color: #f0f0f0;
+        border-top-left-radius: 4px;
+      }
+
+      /* ===== Pagination ===== */
+      .pagination {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        margin-top: 16px;
+      }
+      .pagination__item {
+        padding: 2px 6px;
+        background: var(--darkened-bg);
+        color: #ffffff;
+        border: 1px solid var(--hairline-color);
+        border-radius: 4px;
+        font-size: 14px;
+        cursor: pointer;
+        text-decoration: none;
+        transition: background 0.2s;
+      }
+      .pagination__item:hover {
+        background: #404040;
+      }
+      .pagination__item--active {
+        background: #4a90e2;
+        color: #ffffff;
+      }
+      .pagination__item--disabled {
+        background: var(--body-bg);
+        color: #666;
+        cursor: not-allowed;
+      }
+      .pagination__text {
+        color: #ffffff;
+        font-size: 14px;
+        margin-left: 8px;
+      }
+
+      /* ===== Utilities ===== */
+      .u-hidden {
+        display: none;
+      }
+      .u-mb-8 {
+        margin-bottom: 8px;
+      }
+      .u-mb-12 {
+        margin-bottom: 12px;
+      }
+      .u-mb-16 {
+        margin-bottom: 16px;
+      }
+      .u-mb-24 {
+        margin-bottom: 24px;
+      }
+    </style>
+  </head>
+  <body class="page">
+    <div class="header">
+      <div class="header__title">Django administration</div>
+    </div>
+
+    <div class="breadcrumbs"></div>
+
+    <div class="layout">
+      <div class="layout__sidebar">
+        <div class="sidebar__search">
+          <input
+            type="text"
+            class="sidebar__input"
+            placeholder="Start typing to filter..."
+          />
+        </div>
+        <div class="js-left-list"></div>
+      </div>
+
+      <div class="layout__main">
+        <h1 class="main__title">Select message to change</h1>
+
+        <div class="main__search">
+          <div class="main__search-group">
+            <input
+              type="text"
+              id="search-messages-input"
+              class="main__search-input main__search-input--messages"
+              placeholder="search chats by messages"
+            />
+          </div>
+          <div class="main__search-group">
+            <input
+              type="text"
+              id="search-email-input"
+              class="main__search-input main__search-input--email"
+              placeholder="search chats by email"
+            />
+            <button id="search-btn" class="main__search-btn">Search</button>
+          </div>
+        </div>
+
+        <div class="main__filters"></div>
+
+        <div class="main__actions">
+          <span class="main__action-label">Action:</span>
+          <select class="main__action-select">
+            <option>-------</option>
+          </select>
+          <button class="main__action-btn">Delete selected</button>
+          <span class="main__selection">0 of 51 selected</span>
+        </div>
+
+        <table class="table js-messages-table">
+          <thead class="table__header">
+            <tr>
+              <th class="table__header-cell">
+                <input
+                  type="checkbox"
+                  class="table__checkbox table__checkbox--select-all"
+                />
+              </th>
+              <th class="table__header-cell">UID</th>
+              <th class="table__header-cell">CHAT SESSION</th>
+              <th class="table__header-cell">EMAIL</th>
+            </tr>
+          </thead>
+          <tbody class="js-messages-list"></tbody>
+        </table>
+        <template id="dates-template">
+          <button class="date__filter">May 2025</button>
+        </template>
+        <div class="js-pagination"></div>
+      </div>
+    </div>
+
+    <script>
+      const FETCH_URLS = {
+        SIDEBAR_FILTERS: "filters/",
+        CHATS: "chats/",
+        CHATS_MESSAGES: "chats/messages/",
+        BREADCRUMBS: "breadcrumbs/",
+      }
+
+      class Api {
+        prefixUrl = ""
+
+        constructor(args) {
+          if (!args) return
+          if (args.prefixUrl) {
+            this.prefixUrl = args.prefixUrl
+          }
+        }
+        #addPrefix(url) {
+          if (this.prefixUrl) {
+            return this.prefixUrl + "/" + url
+          }
+
+          return url
+        }
+        #createUrlWithParams(url, params) {
+          if (!url) {
+            throw new Error("Url is undefined!")
+          }
+
+          let resultUrl = url
+
+          if (params?.queryParams && Object.keys(params?.queryParams).length) {
+            return this.#addPrefix(
+              url + `?${new URLSearchParams(params?.queryParams)}`
+            )
+          }
+
+          return this.#addPrefix(url)
+        }
+
+        get(url, params) {
+          return fetch(this.#createUrlWithParams(url, params), {
+            method: "GET",
+            ...params,
+          })
+        }
+
+        post(url, params) {
+          return fetch(this.#createUrlWithParams(url, params), {
+            method: "POST",
+            ...params,
+          })
+        }
+        put(url, params) {
+          return fetch(this.#createUrlWithParams(url, params), {
+            method: "PUT",
+            ...params,
+          })
+        }
+        delete(url, params) {
+          return fetch(this.#createUrlWithParams(url, params), {
+            ...params,
+            method: "DELETE",
+          })
+        }
+      }
+
+      const api = new Api({ prefixUrl: "api" })
+
+      // Сохраняем текущие параметры поиска для пагинации
+      let currentSearchParams = {}
+
+      class EventEmitter {
+        constructor() {
+          this.#events = {}
+        }
+
+        #events = {}
+
+        on(event, callback) {
+          if (!this.#events[event]) {
+            this.#events[event] = []
+          }
+          this.#events[event].push(callback)
+        }
+
+        off(event, callback) {
+          if (!this.#events[event]) return
+
+          if (!callback) {
+            delete this.#events[event]
+            return
+          }
+
+          this.#events[event] = this.#events[event].filter(
+            (cb) => cb !== callback
+          )
+          if (this.#events[event].length === 0) {
+            delete this.#events[event]
+          }
+        }
+
+        emit(event, ...args) {
+          if (!this.#events[event]) return
+
+          this.#events[event].forEach((callback) => {
+            try {
+              callback(...args)
+            } catch (error) {
+              console.error(`Error in event listener for "${event}":`, error)
+            }
+          })
+        }
+
+        once(event, callback) {
+          const onceWrapper = (...args) => {
+            callback(...args)
+            this.off(event, onceWrapper)
+          }
+          this.on(event, onceWrapper)
+        }
+
+        listenerCount(event) {
+          return this.#events[event] ? this.#events[event].length : 0
+        }
+
+        /**
+         * Получить список всех событий, на которые есть подписчики
+         * @returns {string[]} массив названий событий
+         */
+        eventNames() {
+          return Object.keys(this.#events)
+        }
+
+        /**
+         * Удалить всех подписчиков события или всех подписчиков всех событий
+         * @param {string} [event] - название события (если не указано, удаляются все события)
+         */
+        removeAllListeners(event) {
+          if (event) {
+            delete this.#events[event]
+          } else {
+            this.#events = {}
+          }
+        }
+      }
+
+      class PageRenderer {
+        constructor() {
+          this.root = document
+          this.breadcrumbsContainer = this.$(".breadcrumbs")
+          this.leftContainer = this.$(".js-left-list")
+          this.centerContainer = this.$(".js-messages-list")
+          this.paginationContainer = this.$(".js-pagination")
+          this.selectAllCheckbox = this.$(".table__checkbox--select-all")
+          this.openChatRow = null
+          this.currentChatMessages = null
+          this.selectionElement = this.$(".main__selection")
+          this.totalItemsOnPage = 0
+          this.dateButtonNode = this.$("#dates-template")
+
+          this.dateButtonsContainer = this.$(".main__filters")
+          // Обновим счётчик выбранных/всего при инициализации
+          this.#updateSelectionText()
+        }
+
+        /**
+         * Рендерит левую боковую панель (sidebar) с секциями и элементами меню
+         * @param {Array} sections - массив объектов секций
+         * Формат: [{ sectionTitle: string, list: [{ itemTitle: string, titleLink: string, addLink: string }] }]
+         */
+        renderLeftColumn(sections) {
+          if (!this.leftContainer) return
+          this.leftContainer.innerHTML = ""
+          const safeSections = Array.isArray(sections) ? sections : []
+
+          safeSections.forEach((section) => {
+            // Create section title
+            const sectionTitle = document.createElement("h3")
+            sectionTitle.className = "sidebar__section-title"
+            sectionTitle.textContent = this.#safeText(
+              section && section.sectionTitle,
+              "Section"
+            )
+            this.leftContainer.appendChild(sectionTitle)
+
+            // Create section list
+            const sectionList = document.createElement("ul")
+            sectionList.className = "sidebar__list"
+
+            const safeList = Array.isArray(section && section.list)
+              ? section.list
+              : []
+            safeList.forEach((item) => {
+              const listItem = document.createElement("li")
+              listItem.className = "sidebar__item"
+
+              const titleLink = document.createElement("a")
+              titleLink.href = this.#safeText(item && item.titleLink, "#")
+              titleLink.textContent = this.#safeText(
+                item && item.itemTitle,
+                "Item"
+              )
+              listItem.appendChild(titleLink)
+
+              const addLink = document.createElement("a")
+              addLink.href = this.#safeText(item && item.addLink, "#")
+              addLink.className = "sidebar__add"
+              addLink.textContent = "Add"
+              listItem.appendChild(addLink)
+
+              sectionList.appendChild(listItem)
+            })
+
+            this.leftContainer.appendChild(sectionList)
+          })
+        }
+
+        /**
+         * Рендерит основную таблицу с чатами, включая чекбоксы, UID, сессии и email
+         * @param {Array} items - массив объектов чатов
+         * Формат: [{ uid: string, email: string, session: string }]
+         * Побочные эффекты: обновляет счетчик выбранных элементов, сбрасывает чекбокс "выбрать все"
+         */
+        renderChatsList(items) {
+          if (!this.centerContainer) return
+          this.centerContainer.innerHTML = ""
+          const safeItems = Array.isArray(items) ? items : []
+          this.totalItemsOnPage = safeItems.length
+
+          safeItems.forEach((item) => {
+            const row = document.createElement("tr")
+            row.className = "table__row"
+
+            // Checkbox cell
+            const checkboxCell = document.createElement("td")
+            checkboxCell.className = "table__cell"
+            const checkbox = document.createElement("input")
+            checkbox.type = "checkbox"
+            checkbox.className = "table__checkbox table__checkbox--row"
+            checkboxCell.appendChild(checkbox)
+            row.appendChild(checkboxCell)
+
+            // UID cell
+            const uidCell = document.createElement("td")
+            uidCell.className = "table__cell"
+            const uidLink = document.createElement("button")
+            uidLink.type = "button"
+            uidLink.className = "table__uid"
+            const uidValue = this.#safeText(
+              item && item.uid,
+              "c7d229bd-26c4-4757-9edb-cbe5f7765ca4"
+            )
+            uidLink.textContent = uidValue
+            uidLink.dataset.chatid = uidValue
+            // Обработчик клика теперь в глобальном document.addEventListener
+            uidCell.appendChild(uidLink)
+            row.appendChild(uidCell)
+
+            // Chat session cell
+            const sessionCell = document.createElement("td")
+            sessionCell.className = "table__cell"
+            const sessionText = document.createElement("span")
+            sessionText.className = "table__email"
+            sessionText.textContent =
+              this.#safeText(item && item.email, "da000shi@gmail.com") +
+              " - " +
+              this.#safeText(item && item.session, "New chat")
+            sessionCell.appendChild(sessionText)
+            row.appendChild(sessionCell)
+
+            // Email cell
+            const emailCell = document.createElement("td")
+            emailCell.className = "table__cell"
+            const emailText = document.createElement("span")
+            emailText.className = "table__email"
+            emailText.textContent = this.#safeText(
+              item && item.email,
+              "da000shi@gmail.com"
+            )
+            emailCell.appendChild(emailText)
+            row.appendChild(emailCell)
+
+            this.centerContainer.appendChild(row)
+          })
+
+          // Add event listener for select all checkbox
+          this.#setupSelectAll()
+          // Add listeners for row checkboxes to update selection counter
+          this.#setupRowCheckboxListeners()
+          // Refresh selection text
+          this.#updateSelectionText()
+          // Снимем чекбокс "выбрать всё" при перерисовке
+          if (this.selectAllCheckbox) this.selectAllCheckbox.checked = false
+        }
+
+        /**
+         * Открывает чат для конкретного ID и отображает переданные сообщения
+         * @param {string} chatId - ID чата (ищется по textContent кнопки UID)
+         * @param {Array} messages - массив сообщений [{ role: 'user'|'assistant', content: string }]
+         * Примечание: ищет чат по textContent, а не по data-chatid
+         */
+        chatMessageRender(chatId, messages) {
+          if (!chatId) return
+          const uids = Array.from(this.$all(".table__uid"))
+          const link = uids.find((el) => el.textContent === String(chatId))
+          if (!link) return
+          const row = link.closest("tr")
+          if (!row) return
+          this.#openChatForRow(row, undefined, messages)
+        }
+
+        /**
+         * Сохраняет сообщения глобально для текущего чата
+         * @param {Array} messages - массив сообщений [{ role: 'user'|'assistant', content: string }]
+         * Побочные эффекты: сохраняет сообщения в this.currentChatMessages
+         */
+        setMessageContent(messages) {
+          this.currentChatMessages = this.#normalizeMessages(messages)
+        }
+
+        /**
+         * Находит чат по ID и открывает его с переданными сообщениями
+         * @param {string} chatId - ID чата (ищется по data-chatid атрибуту)
+         * @param {Array} messages - массив сообщений [{ role: 'user'|'assistant', content: string }]
+         * Примечание: ищет чат по data-chatid атрибуту кнопки, если чат не найден - выводит предупреждение
+         * Автоматически сохраняет сообщения и открывает чат
+         */
+        openChatById(chatId, messages) {
+          // Ищем строку с нужным chatId
+          const uidButtons = this.$all(".table__uid")
+          const targetButton = Array.from(uidButtons).find(
+            (btn) => btn.dataset.chatid === chatId
+          )
+
+          if (!targetButton) {
+            console.warn(`Chat with ID ${chatId} not found`)
+            return
+          }
+
+          const row = targetButton.closest("tr")
+          if (!row) return
+
+          // Сохраняем сообщения
+          this.currentChatMessages = this.#normalizeMessages(messages)
+
+          // Открываем чат с переданными сообщениями
+          this.#openChatForRow(row, null, this.currentChatMessages)
+        }
+
+        #openChatForRow(row, item, messages) {
+          if (!row) return
+
+          // Если под этой строкой уже вставлен чат — закрыть (toggle)
+          const existingChatRow = row.nextElementSibling
+          if (
+            existingChatRow &&
+            existingChatRow.classList.contains("js-chat-row")
+          ) {
+            this.#closeChatForRow(row)
+            return
+          }
+
+          // Закрыть предыдущий открытый чат, если кликнули по другому UID
+          if (this.openChatRow && this.openChatRow !== row) {
+            this.#closeChatForRow(this.openChatRow)
+          }
+
+          // Создаем отдельную строку под текущей и вставляем окно чата, не удаляя колонки
+          const columnCount = row.children.length
+          const chatRow = document.createElement("tr")
+          chatRow.className = "table__row js-chat-row"
+          const chatCell = document.createElement("td")
+          chatCell.className = "table__cell js-chat-cell"
+          chatCell.setAttribute("colspan", String(columnCount))
+
+          const chatWrapper = document.createElement("div")
+          chatWrapper.className = "chat"
+
+          const messagesContainer = document.createElement("div")
+          messagesContainer.className = "chat__messages"
+
+          // Определяем список сообщений: входные -> сохранённые глобально
+          const stored = this.currentChatMessages
+          const list = Array.isArray(messages)
+            ? this.#normalizeMessages(messages)
+            : Array.isArray(stored) && stored.length
+            ? stored
+            : []
+
+          if (list.length === 0) {
+            // Если сообщений нет, показываем заглушку
+            const emptyMessage = document.createElement("div")
+            emptyMessage.className = "chat__empty"
+            emptyMessage.textContent = "Сообщений нет"
+            emptyMessage.style.cssText = `
+              text-align: center;
+              color: #888;
+              font-style: italic;
+              padding: 20px;
+            `
+            messagesContainer.appendChild(emptyMessage)
+          } else {
+            list.forEach((msg) => {
+              const role = msg && (msg.role === "user" ? "user" : "assistant")
+              const content =
+                typeof msg?.content === "string"
+                  ? msg.content
+                  : String(msg?.content ?? "")
+
+              const msgRow = document.createElement("div")
+              msgRow.className = `chat__message chat__message--${role}`
+
+              const bubble = document.createElement("div")
+              bubble.className = "chat__bubble"
+              bubble.textContent = content
+
+              msgRow.appendChild(bubble)
+              messagesContainer.appendChild(msgRow)
+            })
+          }
+
+          chatWrapper.appendChild(messagesContainer)
+          chatCell.appendChild(chatWrapper)
+          chatRow.appendChild(chatCell)
+          row.parentNode.insertBefore(chatRow, row.nextSibling)
+
+          this.openChatRow = row
+        }
+
+        #normalizeMessages(messages) {
+          const src = Array.isArray(messages) ? messages : []
+          return src.map((m) => ({
+            role: m && m.role === "user" ? "user" : "assistant",
+            content:
+              typeof m?.content === "string"
+                ? m.content
+                : String(m?.content ?? ""),
+          }))
+        }
+
+        #closeChatForRow(row) {
+          if (!row) return
+          const nextRow = row.nextElementSibling
+          if (nextRow && nextRow.classList.contains("js-chat-row")) {
+            nextRow.parentNode.removeChild(nextRow)
+          }
+          if (this.openChatRow === row) {
+            this.openChatRow = null
+          }
+        }
+
+        #setupSelectAll() {
+          const selectAllCheckbox = this.$(".table__checkbox--select-all")
+          const rowCheckboxes = this.$all(".table__checkbox--row")
+
+          if (selectAllCheckbox) {
+            selectAllCheckbox.addEventListener("change", () => {
+              const isChecked = selectAllCheckbox.checked
+              rowCheckboxes.forEach((checkbox) => {
+                checkbox.checked = isChecked
+              })
+              this.#updateSelectionText()
+            })
+          }
+        }
+
+        #setupRowCheckboxListeners() {
+          const rowCheckboxes = this.$all(".table__checkbox--row")
+          rowCheckboxes.forEach((checkbox) => {
+            checkbox.addEventListener("change", () => {
+              this.#updateSelectionText()
+            })
+          })
+        }
+
+        #updateSelectionText() {
+          const total = this.$all(".table__row").length
+          const selected = this.$all(".table__checkbox--row:checked").length
+          if (this.selectionElement) {
+            this.selectionElement.textContent = `selected ${selected} of ${total}`
+          }
+        }
+
+        /**
+         * Рендерит пагинацию внизу таблицы
+         * @param {Object} params - объект с параметрами пагинации
+         * @param {number} params.pagesAmount - общее количество страниц
+         * @param {number} params.activePage - номер активной страницы
+         */
+        renderPagination({ pagesAmount, activePage }) {
+          if (!this.paginationContainer) return
+          this.paginationContainer.innerHTML = ""
+
+          const pagination = document.createElement("div")
+          pagination.className = "pagination"
+
+          // Показываем первые страницы, активную и последние
+          const pages = this.#generatePageNumbers(pagesAmount, activePage)
+
+          pages.forEach((page) => {
+            if (page === "...") {
+              const dots = document.createElement("span")
+              dots.className = "pagination__item pagination__item--disabled"
+              dots.textContent = "..."
+              pagination.appendChild(dots)
+            } else {
+              const pageItem = document.createElement("button")
+              pageItem.className = `pagination__item${
+                page === activePage ? " pagination__item--active" : ""
+              }`
+              pageItem.textContent = page
+              pageItem.setAttribute("data-page", page)
+              pagination.appendChild(pageItem)
+            }
+          })
+
+          // Добавляем текст с общим количеством
+          const totalText = document.createElement("span")
+          totalText.className = "pagination__text"
+          totalText.textContent = `${pagesAmount * 25} messages` // Предполагаем 25 сообщений на страницу
+          pagination.appendChild(totalText)
+
+          this.paginationContainer.appendChild(pagination)
+        }
+        renderDatesTab() {}
+        /**
+         * Рендерит хлебные крошки в .breadcrumbs
+         * @param {Array} items - массив объектов [{ text: string, link: string }]
+         */
+        renderBreadcrumbs(items) {
+          if (!this.breadcrumbsContainer) return
+          this.breadcrumbsContainer.innerHTML = ""
+
+          const safeItems = Array.isArray(items) ? items : []
+
+          safeItems.forEach((item, index) => {
+            const a = document.createElement("a")
+            a.href =
+              typeof item?.link === "string" && item.link ? item.link : "#"
+            a.className = "breadcrumbs__link"
+            a.textContent =
+              typeof item?.text === "string" && item.text.trim().length
+                ? item.text
+                : ""
+            this.breadcrumbsContainer.appendChild(a)
+
+            if (index < safeItems.length - 1) {
+              const sep = document.createElement("span")
+              sep.textContent = " > "
+              this.breadcrumbsContainer.appendChild(sep)
+            }
+          })
+        }
+
+        $(selector, root) {
+          const ctx = root || this.root
+          return ctx ? ctx.querySelector(selector) : null
+        }
+
+        $all(selector, root) {
+          const ctx = root || this.root
+          return ctx ? ctx.querySelectorAll(selector) : []
+        }
+
+        #generatePageNumbers(total, current) {
+          const pages = []
+
+          if (total <= 9) {
+            // Если страниц мало, показываем все
+            for (let i = 1; i <= total; i++) {
+              pages.push(i)
+            }
+          } else {
+            // Определяем начало окна из 5 страниц
+            let startPage = 1
+
+            // Если активная страница больше 3, сдвигаем окно
+            if (current > 3) {
+              startPage = Math.max(1, current - 2)
+              // Но не дальше чем total - 4, чтобы всегда показать 5 страниц
+              startPage = Math.min(startPage, total - 4)
+            }
+
+            // Показываем 5 страниц начиная с startPage
+            for (let i = startPage; i < startPage + 5; i++) {
+              pages.push(i)
+            }
+
+            // Добавляем троеточие только если есть разрыв
+            if (startPage + 5 < total - 1) {
+              pages.push("...")
+            }
+
+            // Показываем последние 2 страницы только если они не пересекаются с первыми 5
+            if (startPage + 4 < total - 1) {
+              for (let i = total - 1; i <= total; i++) {
+                pages.push(i)
+              }
+            } else if (startPage + 4 < total) {
+              // Если пересекается только с предпоследней, показываем только последнюю
+              pages.push(total)
+            }
+          }
+
+          return pages
+        }
+
+        #safeText(value, fallback) {
+          return typeof value === "string" && value.trim().length
+            ? value
+            : fallback || ""
+        }
+
+        // Отрисовка списка дат
+        renderDateFilters(dates = []) {
+          if (!Array.isArray(dates)) {
+            this.dateButtonsContainer.innerText = "Ошибка получения фильтра дат"
+            throw new Error("Dates is not array!")
+          }
+
+          const resultFiltersNode = dates.map((date) => {
+            const { name, value, active } = date
+            const dateButton =
+              this.dateButtonNode.content.firstElementChild.cloneNode(true)
+
+            dateButton.innerText = name
+            dateButton.id = name
+            dateButton.dataset.date = value
+            dateButton.dataset.active = active
+
+            return dateButton
+          })
+
+          this.dateButtonsContainer.replaceChildren(...resultFiltersNode)
+        }
+
+        // Выбор фильтра даты
+        selectDateFilter({ selectedId, filtersData }) {
+          // Обновляем currentSearchParams на основе выбранной кнопки (если selectedId передан)
+          if (selectedId) {
+            const selectedButton = Array.from(
+              this.dateButtonsContainer.childNodes
+            ).find((node) => node.id === selectedId)
+
+            if (selectedButton) {
+              // если All - удаляем фильтр
+              if (selectedButton.dataset.date.toLowerCase() === "all") {
+                delete currentSearchParams.date
+              } else {
+                currentSearchParams.date = selectedButton.dataset.date
+              }
+            }
+          }
+
+          // Обновляем состояние всех кнопок на основе active ключа из данных
+          if (Array.isArray(filtersData)) {
+            this.dateButtonsContainer.childNodes.forEach((node) => {
+              // Ищем соответствующий объект в массиве по name
+              const filterObj = filtersData.find(
+                (item) => item.name === node.id
+              )
+
+              if (filterObj) {
+                // Устанавливаем active на основе значения из объекта
+                node.dataset.active = filterObj.active
+              }
+            })
+          }
+        }
+      }
+
+      class ClickDelegationEvent {
+        constructor(events) {
+          document.addEventListener("click", (e) => {
+            for (const eventName in events) {
+              const event = events[eventName]
+              if (e.target.classList.contains(event.selector)) {
+                if (typeof event.cb !== "function") {
+                  throw new Error("Event callback is not a function!")
+                }
+                event.cb(e)
+                break // Выходим из цикла после первого совпадения
+              }
+            }
+          })
+        }
+      }
+
+      const renderer = new PageRenderer()
+      const dataEmitter = new EventEmitter()
+
+      // Объявляем обработчики событий
+      const ACTIONS = {
+        updateChatList: "chatList:update",
+        loadedSidebarData: "sideBar:loaded",
+        loadedBreadcrumbs: "breadcrumbs:loaded",
+        renderPagination: "setPaginationData",
+        setChatData: "setChatData",
+        searchByMessage: "searchByMessage",
+        searchByEmail: "searchByEmail",
+        openChatAndInsertMessage: "openChagAndInsertMessage",
+        renderDateFilters: "renderFilters",
+        selectDateFilter: "selectDateFilter",
+      }
+
+      const EmitterActions = {
+        selectFirstFilterDate() {
+          dataEmitter.emit(ACTIONS.selectDateFilter, {
+            selectedId: "All dates",
+          })
+        },
+      }
+
+      // ==== Регистрируем обработчик события ====
+      dataEmitter.on(ACTIONS.updateChatList, renderMainData)
+      dataEmitter.on(ACTIONS.loadedSidebarData, renderSidebarData)
+      dataEmitter.on(ACTIONS.loadedBreadcrumbs, renderBreadcrumbs)
+      dataEmitter.on(ACTIONS.renderPagination, renderPagination)
+      dataEmitter.on(ACTIONS.setChatData, setMessagesData)
+      dataEmitter.on(ACTIONS.searchByMessage, searchChatsByMessage)
+      dataEmitter.on(ACTIONS.searchByEmail, searchChatsByEmail)
+      dataEmitter.on(ACTIONS.openChatAndInsertMessage, openChatAndInsertMessage)
+      dataEmitter.on(ACTIONS.renderDateFilters, renderDateFilters)
+      dataEmitter.on(ACTIONS.selectDateFilter, selectDateFilter)
+
+      // ==== Функции рендера данных с сервера ====
+      function renderMainData(data) {
+        renderer.renderChatsList(data)
+      }
+      function renderSidebarData(data) {
+        renderer.renderLeftColumn(data)
+      }
+      function renderBreadcrumbs(data) {
+        renderer.renderBreadcrumbs(data)
+      }
+      function renderPagination(data) {
+        renderer.renderPagination(data)
+      }
+      function setMessagesData(data) {
+        renderer.setMessageContent(data)
+      }
+      function renderDateFilters(data) {
+        renderer.renderDateFilters(data)
+      }
+      function selectDateFilter(data) {
+        // Если data - это объект с selectedId и/или filtersData
+        if (data && typeof data === "object") {
+          renderer.selectDateFilter({
+            selectedId: data.selectedId || data.clickedButtonId, // поддержка старого названия
+            filtersData: data.filtersData,
+          })
+        } else {
+          // Обратная совместимость - если передан только ID
+          renderer.selectDateFilter({ selectedId: data })
+        }
+      }
+
+      function searchChatsByMessage(searchQuery) {
+        if (searchQuery && searchQuery.trim()) {
+          currentSearchParams = {
+            ...currentSearchParams,
+            message: searchQuery.trim(),
+          }
+        } else {
+          delete currentSearchParams.message
+        }
+        fetchMainData(1)
+      }
+      function searchChatsByEmail(searchQuery) {
+        if (searchQuery && searchQuery.trim()) {
+          currentSearchParams = {
+            ...currentSearchParams,
+            email: searchQuery.trim(),
+          }
+        } else {
+          delete currentSearchParams.email
+        }
+        fetchMainData(1)
+      }
+      function openChatAndInsertMessage(data) {
+        const { chatId, messages = [] } = data
+        renderer.openChatById(chatId, messages)
+      }
+
+      async function deleteSelectedChats() {
+        try {
+          const checkedBoxes = document.querySelectorAll(
+            ".table__checkbox--row:checked"
+          )
+          const chatIds = Array.from(checkedBoxes).map(
+            (cb) => cb.closest("tr").querySelector(".table__uid").dataset.chatid
+          )
+
+          const deleteResponse = await api.delete(FETCH_URLS.CHATS, {
+            body: JSON.stringify(chatIds),
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          })
+
+          if (!deleteResponse.ok) {
+            throw new Error("Ошибка удаления чатов")
+          }
+
+          await fetchMainData(1)
+        } catch (error) {
+          console.error("deleteSelectedChats error:", error)
+        }
+      }
+
+      // Запрашиваем данные с сервера и дёргаем емиттер
+      async function fetchMainData(page = 1) {
+        try {
+          const response = await api.get(FETCH_URLS.CHATS, {
+            queryParams: { ...currentSearchParams, page },
+            credentials: "include",
+          })
+          // const mockModule = await import("./mockData.js")
+          // const data = await mockModule.getMockMainPage()
+
+          if (!response.ok) return
+          const data = await response.json()
+
+          const { data: pageData, dateFilters, ...navigationData } = data
+
+          // Эмитим событиями перерисовки страницы и обновляем пагинацию
+          dataEmitter.emit(ACTIONS.updateChatList, pageData)
+          dataEmitter.emit(ACTIONS.renderPagination, navigationData)
+
+          // Отрисовываем фильтры по дате, если они есть
+          if (dateFilters) {
+            dataEmitter.emit(ACTIONS.renderDateFilters, dateFilters)
+          }
+        } catch (error) {
+          console.error("fetchMainData error:", error)
+        }
+      }
+
+      // Запрос данных для sidebar
+      async function fetchSidebarData(page) {
+        try {
+          const response = await api.get(FETCH_URLS.SIDEBAR_FILTERS, {
+            credentials: "include",
+          })
+          // const m = await import("./mockData.js")
+          // const data = await m.getMockSidebarData()
+
+          if (!response.ok) {
+            console.error("ошибка получения сайдбара")
+          }
+          const data = await response.json()
+
+          dataEmitter.emit(ACTIONS.loadedSidebarData, data)
+        } catch (error) {
+          console.error("fetchSidebarData error:", error)
+        }
+      }
+      // Запрос хлебных крошек
+      async function fetchBreadcrumbs() {
+        try {
+          const response = await api.get(FETCH_URLS.BREADCRUMBS, {
+            credentials: "include",
+          })
+          if (!response.ok) {
+            throw new Error("Ошибка получения breadcrumbs")
+          }
+          const data = await response.json()
+          dataEmitter.emit(ACTIONS.loadedBreadcrumbs, data)
+        } catch (error) {
+          console.error(error)
+        }
+      }
+      // Запрос сообщений для чата
+      async function fetchChatMessages(chatId) {
+        try {
+          const response = await api.get(FETCH_URLS.CHATS_MESSAGES, {
+            queryParams: { chatId },
+            credentials: "include",
+          })
+
+          if (!response.ok) {
+            console.error(
+              `Ошибка получения списка сообщений для чата ${chatId}`
+            )
+          }
+          const data = await response.json()
+          return data
+        } catch (error) {
+          console.error("fetchChatMessages error:", error)
+        }
+      }
+
+      // Вешаем обработчики событий на click
+      new ClickDelegationEvent({
+        clickToChatRow: {
+          selector: "table__uid",
+          cb: async (e) => {
+            const chatId = e.target.dataset.chatid
+            const row = e.target.closest("tr")
+
+            // Проверяем - если чат уже открыт, просто закрываем без запроса
+            const existingChatRow = row.nextElementSibling
+            if (
+              existingChatRow &&
+              existingChatRow.classList.contains("js-chat-row")
+            ) {
+              // Чат открыт - вызываем openChatById с пустыми данными, он сам закроет
+              dataEmitter.emit(ACTIONS.openChatAndInsertMessage, {
+                chatId,
+                messages: [],
+              })
+              return
+            }
+
+            // const m = await import("./mockData.js")
+            // const data = m.getMockChatMessages()
+
+            fetchChatMessages(chatId).then((data) => {
+              dataEmitter.emit(ACTIONS.openChatAndInsertMessage, {
+                chatId,
+                messages: data,
+              })
+            })
+          },
+        },
+
+        clickToPaginateButton: {
+          selector: "pagination__item",
+          cb: (e) => {
+            // Обработка нажатия на элемент пагинации
+            const pageNumber = e.target.dataset.page
+            fetchMainData(Number(pageNumber))
+            return
+          },
+        },
+
+        clickToDateFilter: {
+          selector: "date__filter",
+          cb: (e) => {
+            const dateBtnId = e.target.id
+            const selectedButton = e.target
+            if (selectedButton.dataset.date.toLowerCase() === "all") {
+              delete currentSearchParams.date
+            } else {
+              currentSearchParams.date = selectedButton.dataset.date
+            }
+
+            fetchMainData()
+          },
+        },
+
+        clickToSearchButton: {
+          selector: "main__search-btn",
+          cb: (e) => {
+            const messageInput = document.getElementById(
+              "search-messages-input"
+            )
+            const emailInput = document.getElementById("search-email-input")
+            const messageValue = (messageInput?.value || "").trim()
+            const emailValue = (emailInput?.value || "").trim()
+
+            if (messageValue) {
+              currentSearchParams = {
+                ...currentSearchParams,
+                message: messageValue,
+              }
+            } else {
+              delete currentSearchParams.message
+            }
+
+            if (emailValue) {
+              currentSearchParams = {
+                ...currentSearchParams,
+                email: emailValue,
+              }
+            } else {
+              delete currentSearchParams.email
+            }
+
+            fetchMainData()
+          },
+        },
+
+        clickToActionButton: {
+          selector: "main__action-btn",
+          cb: (e) => {
+            deleteSelectedChats()
+          },
+        },
+      })
+
+      // Инициализируем данные при загрузке страницы
+      function init() {
+        fetchMainData()
+        fetchSidebarData()
+        fetchBreadcrumbs()
+      }
+      // Инициализируем данные
+      init()
+    </script>
+  </body>
+</html>

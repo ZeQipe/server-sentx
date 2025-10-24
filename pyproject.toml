@@ -1,0 +1,77 @@
+[project]
+name = "sentx-server"
+version = "0.1.0"
+description = "SentX AI Chat Server - Generative AI chatbot backend"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "django>=5.2",
+    "djangorestframework>=3.16.0",
+    "djangorestframework-simplejwt>=5.5.0",
+    "djoser>=2.3.1",
+    "openai>=1.75.0",
+    "social-auth-app-django>=5.4.3",
+    "stripe>=12.1.0",
+    "gunicorn>=22.0.0",
+    "psycopg2-binary>=2.9.9",
+    "dj-database-url>=2.2.0",
+    "django-cors-headers>=4.7.0",
+    "drf-spectacular>=0.28.0",
+    "whitenoise>=6.9.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "pytest-django>=4.11.1",
+    "ruff>=0.5.6,<0.6",
+    "black>=24.4.0,<25",
+    "mypy>=1.8.0,<2",
+]
+
+[tool.mypy]
+strict = true
+exclude = ["venv", ".venv", "alembic"]
+
+[tool.ruff]
+target-version = "py312"
+exclude = ["alembic"]
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "ARG001", # unused arguments in functions
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "W191",  # indentation contains tabs
+    "B904",  # Allow raising exceptions without from e, for HTTPException
+]
+
+[tool.ruff.lint.pyupgrade]
+# Preserve types, even if a file imports `from __future__ import annotations`.
+keep-runtime-typing = true
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "server.settings"
+python_files = ["test_*.py"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["server*", "service*", "apps*"]

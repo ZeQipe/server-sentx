@@ -26,6 +26,8 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from apps.admin.urls import admin_api_urlpatterns, admin_llm_urlpatterns
+from apps.admin.views import admin_messages_view
 
 urlpatterns = [
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
@@ -35,6 +37,11 @@ urlpatterns = [
         name="swagger",
     ),
     path("api/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
+    # Admin extensions  
+    path("admin/llm/nav/", include(admin_llm_urlpatterns)),
+    path("admin/llm/messages-interface/", admin_messages_view, name="admin-messages-interface"),
+    # Admin API endpoints  
+    path("admin/llm/messages-interface/api/", include(admin_api_urlpatterns)),
     path("admin/", admin.site.urls),
     # JWT URLs (most specific first)
     path("api/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
@@ -46,6 +53,10 @@ urlpatterns = [
     path("api/auth/social/", include("social_django.urls")),
     # App endpoints
     path("api/auth/users/", include("apps.users.urls")),
+    path("api/payments/", include("apps.payments.urls")),
+    path("api/", include("apps.usageLimits.urls")),
+    # Chat endpoints (swagger.yaml + old server routes)
+    path("chat/", include("apps.chat.urls")),
     # OAuth callback routes for frontend
     path("auth/google/callback/", include("social_django.urls", namespace="social")),
     path("auth/error/", include("social_django.urls", namespace="social")),

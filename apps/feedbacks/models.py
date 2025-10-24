@@ -3,7 +3,7 @@ from django.db import models
 
 class Feedback(models.Model):
     message = models.OneToOneField(
-        "messages.Message", on_delete=models.CASCADE, related_name="feedback"
+        "chat_messages.Message", on_delete=models.CASCADE, related_name="feedback"
     )
     is_liked = models.BooleanField(null=True, blank=True)
     comment = models.TextField(blank=True, null=True)

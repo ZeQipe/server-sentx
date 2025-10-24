@@ -1,0 +1,265 @@
+openapi: 3.0.3
+info:
+  title: SentX Chat API
+  description: API для чата с поддержкой SSE стриминга
+  version: 1.0.0
+
+servers:
+  - url: https://api.sentx.ai
+    description: Production server
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: session
+
+  schemas:
+    SendMessageRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+          description: Текст сообщения от пользователя
+          example: "Привет, как дела?"
+        chatId:
+          oneOf:
+            - type: string
+            - type: "null"
+          description: |
+            ID чата (может быть строкой или null). 
+            Если null или не передан - пользователь неавторизован или создает новый чат,
+            сервер создаст временный chatId, который будет действителен только на время SSE соединения.
+          example: "chat_456def"
+
+    SendMessageResponse:
+      type: object
+      properties:
+        messageId:
+          type: string
+          description: ID созданного сообщения пользователя
+          example: "msg_123abc"
+        chatId:
+          type: string
+          description: |
+            ID чата (постоянный для авторизованных пользователей или временный для неавторизованных).
+            Временный chatId действителен только на время SSE соединения.
+          example: "chat_456def"
+        isTemporary:
+          type: boolean
+          description: Флаг, указывающий является ли chatId временным (true для неавторизованных пользователей)
+          example: false
+
+    SSEMessage:
+      type: object
+      description: Структура данных в SSE потоке
+      properties:
+        messageId:
+          type: string
+          description: ID сообщения (по нему понимаем, что стримится)
+          example: "msg_789ghi"
+        chatId:
+          type: string
+          description: ID чата
+          example: "chat_456def"
+        role:
+          type: string
+          enum: [assistant, user]
+          description: Роль отправителя
+          example: "assistant"
+        content:
+          type: string
+          description: Содержимое сообщения (полное для user, частичное для assistant в процессе стриминга)
+          example: "Привет! Как"
+        resolveMessage:
+          type: boolean
+          description: Флаг для показа модалки с покупкой подписки
+          example: false
+
+    ChatMessage:
+      type: object
+      properties:
+        messageId:
+          type: string
+          example: "msg_123abc"
+        chatId:
+          type: string
+          example: "chat_456def"
+        role:
+          type: string
+          enum: [assistant, user]
+          example: "user"
+        content:
+          type: string
+          example: "Привет, как дела?"
+        createdAt:
+          type: string
+          format: date-time
+          example: "2025-10-17T13:52:50.327Z"
+
+    ChatHistoryResponse:
+      type: object
+      properties:
+        chatId:
+          type: string
+          example: "chat_456def"
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+          description: Последние 100 сообщений из чата
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "Unauthorized"
+        message:
+          type: string
+          example: "Invalid or expired token"
+
+security:
+  - bearerAuth: []
+  - cookieAuth: []
+
+paths:
+  /chat/messages:
+    post:
+      summary: Отправить сообщение в чат
+      description: |
+        Отправляет сообщение от пользователя. Сервер сам берет последние 100 сообщений из БД для контекста.
+        После отправки нужно подключиться к `/chat/stream` для получения ответа.
+
+        **Для неавторизованных пользователей:**
+        - Не передавайте chatId в body
+        - Сервер вернет временный chatId, который действителен только на время SSE соединения
+        - Используйте этот временный chatId для подключения к `/chat/stream`
+
+        **Для авторизованных пользователей:**
+        - Передавайте chatId в body (если продолжаете существующий чат)
+        - Или не передавайте chatId для создания нового чата
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+        - {} # Разрешаем анонимный доступ
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageRequest"
+      responses:
+        "200":
+          description: Сообщение успешно отправлено
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SendMessageResponse"
+        "401":
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Превышен лимит запросов
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /chat/stream:
+    get:
+      summary: SSE стрим для получения сообщений от ассистента
+      description: |
+        Постоянное SSE соединение для получения сообщений в реальном времени.
+        Сервер стримит содержимое сообщения частями (по messageId понимаем что стримится).
+
+        **Для неавторизованных пользователей:**
+        Используйте временный chatId, полученный из ответа `/chat/messages`
+
+        **Формат SSE события:**
+        ```
+        data: {"messageId":"msg_789","chatId":"chat_456","role":"assistant","content":"Привет","resolveMessage":false}
+
+        data: {"messageId":"msg_789","chatId":"chat_456","role":"assistant","content":"Привет! Как","resolveMessage":false}
+
+        data: {"messageId":"msg_789","chatId":"chat_456","role":"assistant","content":"Привет! Как дела?","resolveMessage":true}
+        ```
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+        - {} # Разрешаем анонимный доступ с временным chatId
+      parameters:
+        - name: chatId
+          in: query
+          required: true
+          schema:
+            type: string
+          description: |
+            ID чата (постоянный или временный).
+            Для неавторизованных пользователей используйте временный chatId из ответа `/chat/messages`
+          example: "chat_456def"
+      responses:
+        "200":
+          description: SSE поток с сообщениями
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  Поток SSE событий. Каждое событие содержит JSON с полями:
+                  messageId, chatId, role, content, resolveMessage
+              example: |
+                data: {"messageId":"msg_789","chatId":"chat_456","role":"assistant","content":"Привет","resolveMessage":false}
+
+                data: {"messageId":"msg_789","chatId":"chat_456","role":"assistant","content":"Привет! Как дела?","resolveMessage":true}
+        "401":
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /chat/history:
+    get:
+      summary: Получить историю сообщений чата
+      description: Возвращает последние 100 сообщений из текущего чата. Пагинация будет добавлена позже.
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: chatId
+          in: query
+          required: true
+          schema:
+            type: string
+          description: ID чата
+          example: "chat_456def"
+      responses:
+        "200":
+          description: История сообщений
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatHistoryResponse"
+        "401":
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Чат не найден
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"

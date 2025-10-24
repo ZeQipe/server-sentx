@@ -67,6 +67,8 @@ INSTALLED_APPS = [
     "apps.attachedFiles",
     "apps.usageLimits",
     "apps.anonymousUsageLimits",
+    "apps.chat",
+    "apps.admin",
 ]
 
 MIDDLEWARE = [
@@ -173,6 +175,7 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
         'rest_framework.renderers.JSONRenderer',
         'rest_framework.renderers.BrowsableAPIRenderer',
+        'apps.chat.renderers.SSERenderer',  # Custom renderer for SSE
     ],
 }
 
