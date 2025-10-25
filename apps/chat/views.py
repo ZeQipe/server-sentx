@@ -44,6 +44,7 @@ class ChatMessagesView(views.APIView):
         Request body:
             - content (required): Message content
             - chatId (optional): Chat ID (null for new chat or anonymous)
+            - sessionId (optional): SSE session ID для отправки ответа через постоянное соединение
 
         Returns:
             - messageId: Created user message ID
@@ -56,31 +57,42 @@ class ChatMessagesView(views.APIView):
 
         content = serializer.validated_data["content"]
         chat_id = serializer.validated_data.get("chatId")
+        session_id = request.data.get("sessionId")  # SSE session ID
         user = request.user if request.user.is_authenticated else None
         ip_address = self.get_client_ip(request)
 
         # Check usage limits before creating message
         can_proceed, error_msg = ChatService.check_usage_limits(user, ip_address)
         if not can_proceed:
+            # Если есть SSE сессия, отправляем ошибку туда
+            if session_id and hasattr(ChatService, '_sse_queues') and session_id in ChatService._sse_queues:
+                ChatService._sse_queues[session_id]['queue'].put({
+                    "error": error_msg or "Request limit exceeded",
+                    "messageId": str(uuid.uuid4()),
+                    "chatId": chat_id or ""
+                })
             return Response(
                 {"error": error_msg or "Request limit exceeded"},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
 
         # Determine if this is a temporary session
-        is_temporary = not user or not chat_id
-
-        if is_temporary:
-            # Create temporary chat ID for anonymous users
+        is_temporary = not user
+        
+        if not user:
+            # Неавторизованный пользователь - всегда временный чат
             if not chat_id:
                 chat_id = f"temp_{uuid.uuid4()}"
             temp_session = ChatService.get_or_create_temporary_session(chat_id)
             user_message_id = str(uuid.uuid4())
             ChatService.add_temporary_message(temp_session, "user", content, user_message_id)
+            public_chat_id = chat_id
             is_temp = True
+            db_chat_id = chat_id
         else:
-            # Authenticated user with existing or new chat
+            # Авторизованный пользователь
             if chat_id:
+                # Продолжаем существующий чат
                 try:
                     # chat_id уже деобфусцирован через сериализатор
                     chat_session = ChatSession.objects.get(id=chat_id, user=user)
@@ -89,27 +101,55 @@ class ChatMessagesView(views.APIView):
                         {"error": "Chat session not found"},
                         status=status.HTTP_404_NOT_FOUND,
                     )
-                # Обфусцируем ID для ответа
-                public_chat_id = Abfuscator.encode(
-                    salt=settings.ABFUSCATOR_ID_KEY, value=chat_session.id, min_length=17
-                )
             else:
-                # Create new permanent session
+                # Создаем новый постоянный чат
                 chat_session = ChatService.create_chat_session(user)
-                # Обфусцируем ID для ответа
-                public_chat_id = Abfuscator.encode(
-                    salt=settings.ABFUSCATOR_ID_KEY, value=chat_session.id, min_length=17
-                )
-
+            
+            db_chat_id = chat_session.id
+            # Обфусцируем ID для ответа
+            public_chat_id = Abfuscator.encode(
+                salt=settings.ABFUSCATOR_ID_KEY, value=chat_session.id, min_length=17
+            )
+            
             # Save user message
             user_message = ChatService.add_message(chat_session, "user", content)
             user_message_id = user_message.uid
             is_temp = False
 
+        # Если есть активное SSE соединение, отправляем ответ через него
+        if session_id and hasattr(ChatService, '_sse_queues') and session_id in ChatService._sse_queues:
+            sse_info = ChatService._sse_queues[session_id]
+            message_queue = sse_info['queue']
+            
+            # Отправляем сообщение пользователя в SSE
+            message_queue.put({
+                "messageId": user_message_id,
+                "chatId": public_chat_id,
+                "role": "user",
+                "content": content
+            })
+            
+            # Запускаем генерацию ответа в отдельном потоке
+            import threading
+            
+            def generate_response():
+                stream = ChatService.process_chat_stream(
+                    user, db_chat_id, content, ip_address, is_temporary
+                )
+                for chunk in stream:
+                    # Подменяем chatId на публичный для постоянных чатов
+                    if not is_temporary and isinstance(chunk, dict) and "chatId" in chunk:
+                        chunk["chatId"] = public_chat_id
+                    message_queue.put(chunk)
+            
+            thread = threading.Thread(target=generate_response)
+            thread.daemon = True
+            thread.start()
+
         # Return response
         response_data = {
             "messageId": user_message_id,
-            "chatId": public_chat_id if not is_temporary else chat_id,
+            "chatId": public_chat_id,
             "isTemporary": is_temp,
         }
 
@@ -119,7 +159,7 @@ class ChatMessagesView(views.APIView):
 class ChatStreamView(views.APIView):
     """
     GET /chat/stream
-    SSE stream for receiving assistant responses
+    Постоянное SSE соединение для получения ответов ассистента
     """
 
     permission_classes = [AllowAny]
@@ -135,92 +175,74 @@ class ChatStreamView(views.APIView):
 
     def get(self, request):
         """
-        SSE stream for chat messages
+        Постоянное SSE соединение для стриминга сообщений
+        Соединение остается открытым для всех последующих ответов
 
         Query params:
-            - chatId (required): Chat ID (permanent or temporary)
+            - chatId (optional): Initial chat ID
 
         Returns:
-            SSE stream with assistant responses
+            Постоянный SSE stream
         """
-        chat_id = request.query_params.get("chatId")
-        if not chat_id:
-            return Response(
-                {"error": "chatId is required"}, status=status.HTTP_400_BAD_REQUEST
-            )
-
+        initial_chat_id = request.query_params.get("chatId")
         user = request.user if request.user.is_authenticated else None
         ip_address = self.get_client_ip(request)
-        is_temporary = chat_id.startswith("temp_")
-
-        # Для постоянных чатов деобфусцируем chatId для БД, но наружу возвращаем исходный (обфусцированный)
-        db_chat_id = None
-        public_chat_id = chat_id
-        if not is_temporary:
-            try:
-                db_chat_id = Abfuscator.decode(salt=settings.ABFUSCATOR_ID_KEY, value=chat_id)
-            except Exception:
-                return Response({"error": "Invalid chatId format"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Get the last user message from the session
-        if is_temporary:
-            temp_session = ChatService.get_or_create_temporary_session(chat_id)
-            messages = temp_session.get("messages", [])
-            if not messages or messages[-1]["role"] != "user":
-                return Response(
-                    {"error": "No user message to respond to"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            last_message = messages[-1]
-            content = last_message["content"]
-        else:
-            # Get from database (используем деобфусцированный ID)
-            try:
-                if user:
-                    chat_session = ChatSession.objects.get(id=db_chat_id, user=user)
-                else:
-                    return Response(
-                        {"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED
-                    )
-            except ChatSession.DoesNotExist:
-                return Response(
-                    {"error": "Chat session not found"}, status=status.HTTP_404_NOT_FOUND
-                )
-
-            # Get last user message
-            last_message = (
-                chat_session.messages.filter(role="user").order_by("-created_at").first()
-            )
-            if not last_message:
-                return Response(
-                    {"error": "No user message to respond to"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            content = last_message.content
-
-        # Stream response
+        
         def event_stream():
-            """Generate SSE events"""
-            # Передаем в сервис числовой ID для БД, но наружу вернем обфусцированный
-            effective_chat_id = db_chat_id if not is_temporary else chat_id
-            stream = ChatService.process_chat_stream(
-                user, effective_chat_id, content, ip_address, is_temporary
-            )
-
-            for message_data in stream:
-                # Format as SSE
-                # Подменяем chatId на публичный (обфусцированный) для постоянных чатов
-                if not is_temporary and isinstance(message_data, dict) and "chatId" in message_data:
-                    message_data["chatId"] = public_chat_id
-                data = json.dumps(message_data, ensure_ascii=False)
-                yield f"data: {data}\n\n"
-
-            # Send [DONE] marker
-            yield "data: [DONE]\n\n"
+            """
+            Постоянный генератор SSE событий
+            Держит соединение открытым и ждет новых сообщений
+            """
+            import queue
+            import threading
+            import time
+            
+            # Создаем очередь для этого SSE соединения
+            message_queue = queue.Queue()
+            session_id = str(uuid.uuid4())
+            
+            # Сохраняем очередь глобально для доступа из ChatMessagesView
+            if not hasattr(ChatService, '_sse_queues'):
+                ChatService._sse_queues = {}
+            ChatService._sse_queues[session_id] = {
+                'queue': message_queue,
+                'user': user,
+                'ip': ip_address,
+                'chat_id': initial_chat_id
+            }
+            
+            try:
+                # Отправляем начальное сообщение с sessionId
+                yield f"data: {json.dumps({'type': 'connected', 'sessionId': session_id})}\n\n"
+                
+                # Основной цикл - держим соединение открытым
+                while True:
+                    try:
+                        # Ждем сообщение из очереди с таймаутом для heartbeat
+                        message = message_queue.get(timeout=30)
+                        
+                        if message == "CLOSE":
+                            break
+                        
+                        # Отправляем сообщение клиенту
+                        yield f"data: {json.dumps(message, ensure_ascii=False)}\n\n"
+                        
+                    except queue.Empty:
+                        # Отправляем heartbeat для поддержания соединения
+                        yield f": heartbeat\n\n"
+                        
+            except GeneratorExit:
+                # Соединение закрыто клиентом
+                pass
+            finally:
+                # Очищаем очередь при закрытии соединения
+                if session_id in ChatService._sse_queues:
+                    del ChatService._sse_queues[session_id]
 
         response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
         response["Cache-Control"] = "no-cache"
         response["X-Accel-Buffering"] = "no"
+        response["Connection"] = "keep-alive"
         return response
 
 
@@ -396,9 +418,8 @@ class ChatRegenerateView(views.APIView):
                 import traceback
                 traceback.print_exc()
                 yield f"data: {json.dumps({'error': f'Error processing request: {str(e)}', 'messageId': assistant_message_id, 'chatId': public_chat_id})}\n\n"
-
-            # End of stream
-            yield "data: [DONE]\n\n"
+            
+            # Не отправляем [DONE] - клиент понимает по messageId когда стрим завершен
 
         response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
         response["Cache-Control"] = "no-cache"

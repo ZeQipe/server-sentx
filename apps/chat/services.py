@@ -247,12 +247,12 @@ class ChatService:
                 if content_part:
                     full_content += content_part
 
-                    # Yield SSE message
+                    # Yield SSE message with accumulated content
                     yield {
                         "messageId": assistant_message_id,
                         "chatId": chat_id,
                         "role": "assistant",
-                        "content": full_content,
+                        "content": full_content,  # Всегда отправляем полный накопленный контент
                         "resolveMessage": False,  # Will set to True in final message
                     }
 
