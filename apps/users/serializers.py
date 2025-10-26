@@ -5,7 +5,8 @@ from rest_framework.validators import UniqueValidator
 from .models import User
 
 
-class UserSerializer(serializers.ModelSerializer):
+class UserCreateSerializer(serializers.ModelSerializer):
+    """Serializer для создания пользователя (регистрация)"""
     password = serializers.CharField(
         write_only=True, required=True, validators=[validate_password]
     )
@@ -22,10 +23,9 @@ class UserSerializer(serializers.ModelSerializer):
             "password",
             "re_password",
             "name",
-            "stripe_customer_id",
         ]
-        read_only_fields = ["stripe_customer_id"]
-        ref_name = "SentxUser"
+        read_only_fields = ["id"]
+        ref_name = "SentxUserCreate"
 
     def validate(self, attrs):
         if attrs.get("password") != attrs.get("re_password"):
@@ -43,15 +43,44 @@ class UserSerializer(serializers.ModelSerializer):
         )
         return user
 
-    def update(self, instance, validated_data):
-        # Handle password separately
-        password = validated_data.pop("password", None)
-        if password:
-            instance.set_password(password)
 
-        # Handle other fields
+class UserSerializer(serializers.ModelSerializer):
+    """Serializer для получения и обновления пользователя"""
+    email = serializers.EmailField(
+        required=False, validators=[UniqueValidator(queryset=User.objects.all())]
+    )
+
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "email",
+            "name",
+            "is_unlimited",
+            "date_joined",
+            "is_active",
+            "stripe_customer_id",
+            "google_id",
+            "icloud_id",
+            "x_id",
+        ]
+        read_only_fields = [
+            "id",
+            "date_joined",
+            "stripe_customer_id",
+            "google_id",
+            "icloud_id",
+            "x_id",
+            "is_unlimited",
+            "is_active",
+        ]
+        ref_name = "SentxUser"
+
+    def update(self, instance, validated_data):
+        # Обновляем только разрешенные поля
         for attr, value in validated_data.items():
-            if attr != "re_password":  # Skip re_password
+            # Только email и name можно обновлять
+            if attr in ['email', 'name']:
                 setattr(instance, attr, value)
 
         instance.save()

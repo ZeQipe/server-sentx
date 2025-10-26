@@ -46,13 +46,13 @@ urlpatterns = [
     # JWT URLs (most specific first)
     path("api/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
-    # Djoser URLs
+    # Djoser URLs - /api/auth/users/, /api/auth/users/me/, etc.
     path("api/auth/", include("djoser.urls")),
     path("api/auth/jwt/", include("djoser.urls.jwt")),
     # Social Auth URLs  
     path("api/auth/social/", include("social_django.urls")),
-    # App endpoints
-    path("api/auth/users/", include("apps.users.urls")),
+    # Custom social auth callback - /api/auth/social/<provider>/callback/
+    path("api/auth/social/", include("apps.users.urls")),
     path("api/payments/", include("apps.payments.urls")),
     path("api/", include("apps.usageLimits.urls")),
     # Chat endpoints (swagger.yaml + old server routes)

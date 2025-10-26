@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "rest_framework",
     "rest_framework_simplejwt",
+    "rest_framework_simplejwt.token_blacklist",  # Для блэклиста refresh токенов
     "djoser",
     "social_django",
     "drf_spectacular",
@@ -199,16 +200,53 @@ SPECTACULAR_SETTINGS = {
 AUTH_USER_MODEL = "users.User"
 
 DJOSER = {
+    # Email settings
     "EMAIL_FRONTEND_PROTOCOL": "https",
     "EMAIL_FRONTEND_DOMAIN": "sentx.ai",
     "EMAIL_FRONTEND_SITE_NAME": "SentX",
     "PASSWORD_RESET_CONFIRM_URL": "#/password/reset/confirm/{uid}/{token}",
+    
+    # Authentication
     "LOGIN_FIELD": "email",
+    
+    # Email confirmations
     "SEND_ACTIVATION_EMAIL": False,
     "SEND_CONFIRMATION_EMAIL": False,
-    "HIDE_USERS": True,
+    "PASSWORD_CHANGED_EMAIL_CONFIRMATION": False,
+    "USERNAME_CHANGED_EMAIL_CONFIRMATION": False,
+    
+    # Password settings
+    "USER_CREATE_PASSWORD_RETYPE": True,  # Требовать re_password при регистрации
+    "SET_PASSWORD_RETYPE": True,  # Требовать подтверждение при смене пароля
+    "LOGOUT_ON_PASSWORD_CHANGE": False,  # Не разлогинивать при смене пароля
+    "PASSWORD_RESET_SHOW_EMAIL_NOT_FOUND": False,  # Не показывать, что email не найден
+    
+    # User visibility
+    "HIDE_USERS": True,  # Скрыть список пользователей от обычных юзеров
+    
+    # Permissions - строгий контроль доступа
+    "PERMISSIONS": {
+        "user_list": ["rest_framework.permissions.IsAdminUser"],  # Только admin видит список
+        "user": ["rest_framework.permissions.IsAuthenticated"],  # Только свой профиль
+        "user_create": ["rest_framework.permissions.AllowAny"],  # Регистрация для всех
+        "user_delete": ["rest_framework.permissions.IsAuthenticated"],  # Удаление своего аккаунта
+        "set_password": ["rest_framework.permissions.IsAuthenticated"],  # Смена пароля
+        "username_reset": ["rest_framework.permissions.AllowAny"],
+        "username_reset_confirm": ["rest_framework.permissions.AllowAny"],
+        "set_username": ["rest_framework.permissions.IsAuthenticated"],
+        "password_reset": ["rest_framework.permissions.AllowAny"],
+        "password_reset_confirm": ["rest_framework.permissions.AllowAny"],
+        "activation": ["rest_framework.permissions.AllowAny"],
+        "token_create": ["rest_framework.permissions.AllowAny"],
+        "token_destroy": ["rest_framework.permissions.IsAuthenticated"],
+    },
+    
+    # Serializers
     "SERIALIZERS": {
-        "current_user": "apps.users.serializers.UserSerializer",
+        "user": "apps.users.serializers.UserSerializer",  # Для GET /users/me/
+        "current_user": "apps.users.serializers.UserSerializer",  # Для текущего юзера
+        "user_create": "apps.users.serializers.UserCreateSerializer",  # Для POST /users/
+        "user_delete": "djoser.serializers.UserDeleteSerializer",
     },
 }
 
@@ -237,8 +275,39 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(days=90),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    # Token lifetimes
+    "ACCESS_TOKEN_LIFETIME": timedelta(hours=1),  # 1 час - короткий access token
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=30),  # 30 дней - длинный refresh token
+    
+    # Token rotation and blacklisting
+    "ROTATE_REFRESH_TOKENS": True,  # Ротация refresh токенов при обновлении
+    "BLACKLIST_AFTER_ROTATION": True,  # Блэклист старых refresh токенов
+    "UPDATE_LAST_LOGIN": True,  # Обновление last_login при получении токена
+    
+    # Algorithm and signing
+    "ALGORITHM": "HS256",
+    "SIGNING_KEY": SECRET_KEY,
+    "VERIFYING_KEY": None,
+    
+    # Auth header configuration
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "AUTH_HEADER_NAME": "HTTP_AUTHORIZATION",
+    
+    # User identification in token
+    "USER_ID_FIELD": "id",  # Поле в User model для идентификации
+    "USER_ID_CLAIM": "user_id",  # Название claim в JWT payload
+    
+    # Token types
+    "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
+    "TOKEN_TYPE_CLAIM": "token_type",
+    
+    # JWT ID
+    "JTI_CLAIM": "jti",
+    
+    # Sliding tokens (not used, but configured for clarity)
+    "SLIDING_TOKEN_REFRESH_EXP_CLAIM": "refresh_exp",
+    "SLIDING_TOKEN_LIFETIME": timedelta(minutes=5),
+    "SLIDING_TOKEN_REFRESH_LIFETIME": timedelta(days=1),
 }
 
 SOCIAL_AUTH_JSONFIELD_ENABLED = True
@@ -327,6 +396,18 @@ CORS_EXPOSE_HEADERS = [
     'x-accel-buffering',
 ]
 
+# Cache settings
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "sentx-admin-cache",
+        "TIMEOUT": 300,  # 5 minutes default
+        "OPTIONS": {
+            "MAX_ENTRIES": 1000
+        }
+    }
+}
+
 # Logging settings
 LOGGING = {
     "version": 1,
@@ -357,6 +438,11 @@ LOGGING = {
         "apps.users.backends": {
             "handlers": ["console"],
             "level": "DEBUG",
+            "propagate": True,
+        },
+        "apps.admin": {
+            "handlers": ["console"],
+            "level": "DEBUG" if DEBUG else "INFO",
             "propagate": True,
         },
     },

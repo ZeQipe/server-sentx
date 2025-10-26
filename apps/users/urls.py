@@ -4,7 +4,7 @@ from . import views
 
 urlpatterns = [
     path(
-        "social/<str:provider>/",
+        "<str:provider>/callback/",
         views.SocialAuthCallbackView.as_view(),
         name="social-auth",
     ),
