@@ -12,10 +12,10 @@ router.register(r"messages-list", MessageViewSet, basename="message")
 
 urlpatterns = [
     # Swagger.yaml endpoints (priority)
-    path("messages", ChatMessagesView.as_view(), name="chat-messages"),
-    path("messages/regenerate", ChatRegenerateView.as_view(), name="chat-regenerate"),
-    path("stream", ChatStreamView.as_view(), name="chat-stream"),
-    path("history", ChatHistoryView.as_view(), name="chat-history"),
+    path("messages/", ChatMessagesView.as_view(), name="chat-messages"),
+    path("messages/regenerate/", ChatRegenerateView.as_view(), name="chat-regenerate"),
+    path("stream/", ChatStreamView.as_view(), name="chat-stream"),
+    path("history/", ChatHistoryView.as_view(), name="chat-history"),
     
     # Persistent SSE connection endpoints
     path("persistent-stream", PersistentChatStreamView.as_view(), name="chat-persistent-stream"),
