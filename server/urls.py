@@ -51,15 +51,12 @@ urlpatterns = [
     path("api/auth/jwt/", include("djoser.urls.jwt")),
     # Social Auth URLs  
     path("api/auth/social/", include("social_django.urls")),
-    # Custom social auth callback - /api/auth/social/<provider>/callback/
-    path("api/auth/social/", include("apps.users.urls")),
+    # Custom social auth callback - /api/auth/users/social/<provider>/callback/
+    path("api/auth/users/social/", include("apps.users.urls")),
     path("api/payments/", include("apps.payments.urls")),
     path("api/", include("apps.usageLimits.urls")),
     # Chat endpoints (swagger.yaml + old server routes)
-    path("chat/", include("apps.chat.urls")),
-    # OAuth callback routes for frontend
-    path("auth/google/callback/", include("social_django.urls", namespace="social")),
-    path("auth/error/", include("social_django.urls", namespace="social")),
+    path("api/chat/", include("apps.chat.urls")),
     # Favicon redirect
     path("favicon.ico", RedirectView.as_view(url=settings.STATIC_URL + "favicon.ico")),
 ]
