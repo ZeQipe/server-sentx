@@ -23,12 +23,19 @@ class SocialAuthCallbackView(generics.GenericAPIView):
     def handle_auth(self, request, code, provider):
         """Handle authentication for the provided social provider."""
         try:
+            logger.info(f"Starting handle_auth for provider: {provider}")
+            
             # Proper initialization using Django Social Auth strategy
             strategy = load_strategy(request)
+            logger.info(f"Strategy loaded: {strategy}")
+            
             backend = load_backend(strategy, provider, None)
+            logger.info(f"Backend loaded: {backend}")
 
             code_verifier = request.data.get("code_verifier")
             redirect_uri = request.data.get("redirect_uri")
+            logger.info(f"Code verifier: {code_verifier[:20]}..." if code_verifier else "No code_verifier")
+            logger.info(f"Redirect URI: {redirect_uri}")
             
             # Save code_verifier in strategy session for PKCE
             if code_verifier:
@@ -40,8 +47,10 @@ class SocialAuthCallbackView(generics.GenericAPIView):
                 backend.data['redirect_uri'] = redirect_uri
                 backend.redirect_uri = redirect_uri
             
+            logger.info(f"Calling backend.do_auth with code...")
             # Perform authentication - pass authorization code
             user = backend.do_auth(code, code_verifier=code_verifier)
+            logger.info(f"User returned: {user}")
             if user:
                 refresh = RefreshToken.for_user(user)
                 return response.Response(
