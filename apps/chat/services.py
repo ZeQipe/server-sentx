@@ -110,11 +110,12 @@ class ChatService:
             anon_limit = AnonymousUsageLimitService.get_or_create_anonymous_usage_limit(
                 ip_address
             )
-            can_proceed, error_msg = AnonymousUsageLimitService.check_anonymous_request_limit(
+            result = AnonymousUsageLimitService.check_anonymous_request_limit(
                 ip_address
             )
+            can_proceed = result["can_make_request"]
             if not can_proceed:
-                return False, error_msg
+                return False, f"Daily limit exceeded. Requests left: {result['requests_left']}"
             return True, None
 
     @staticmethod
