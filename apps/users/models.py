@@ -31,6 +31,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_staff = models.BooleanField(default=False)
     is_unlimited = models.BooleanField(default=False)
     date_joined = models.DateTimeField(default=timezone.now)
+    
+    # SSE Session ID
+    session_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
 
     # Social authentication fields
     google_id = models.CharField(max_length=255, blank=True, null=True)

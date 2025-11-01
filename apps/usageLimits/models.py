@@ -8,8 +8,8 @@ class UsageLimit(models.Model):
     user = models.OneToOneField(
         User, on_delete=models.CASCADE, related_name="usage_limit"
     )
-    free_requests_limit = models.IntegerField(default=3)
-    paid_requests_limit = models.IntegerField(default=15)
+    free_requests_limit = models.IntegerField(default=10)
+    paid_requests_limit = models.IntegerField(default=100)
     requests_made_today = models.IntegerField(default=0)
     last_reset_date = models.DateField(auto_now_add=True)
 

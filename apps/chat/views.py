@@ -64,13 +64,15 @@ class ChatMessagesView(views.APIView):
         # Check usage limits before creating message
         can_proceed, error_msg = ChatService.check_usage_limits(user, ip_address)
         if not can_proceed:
-            # Если есть SSE сессия, отправляем ошибку туда
+            # Если есть SSE сессия, отправляем ошибку на ВСЕ соединения
             if session_id and hasattr(ChatService, '_sse_queues') and session_id in ChatService._sse_queues:
-                ChatService._sse_queues[session_id]['queue'].put({
+                error_data = {
                     "error": error_msg or "Request limit exceeded",
                     "messageId": str(uuid.uuid4()),
                     "chatId": chat_id or ""
-                })
+                }
+                for connection in ChatService._sse_queues[session_id]:
+                    connection['queue'].put(error_data)
             return Response(
                 {"error": error_msg or "Request limit exceeded"},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -116,31 +118,60 @@ class ChatMessagesView(views.APIView):
             user_message_id = user_message.uid
             is_temp = False
 
-        # Если есть активное SSE соединение, отправляем ответ через него
+        # Если есть активные SSE соединения, отправляем ответ на ВСЕ устройства
         if session_id and hasattr(ChatService, '_sse_queues') and session_id in ChatService._sse_queues:
-            sse_info = ChatService._sse_queues[session_id]
-            message_queue = sse_info['queue']
+            connections = ChatService._sse_queues[session_id]
             
-            # Отправляем сообщение пользователя в SSE
-            message_queue.put({
+            # Отправляем сообщение пользователя на ВСЕ SSE соединения
+            user_msg_data = {
                 "messageId": user_message_id,
                 "chatId": public_chat_id,
                 "role": "user",
                 "content": content
-            })
+            }
+            for connection in connections:
+                connection['queue'].put(user_msg_data)
+            
+            # Генерируем ID для ответа ассистента
+            assistant_message_id = str(uuid.uuid4())
+            
+            # Отправляем start-generation на ВСЕ SSE соединения
+            start_generation_data = {
+                "start-generation": {
+                    "chatId": public_chat_id,
+                    "messageId": assistant_message_id
+                }
+            }
+            for connection in connections:
+                connection['queue'].put(start_generation_data)
             
             # Запускаем генерацию ответа в отдельном потоке
             import threading
             
             def generate_response():
                 stream = ChatService.process_chat_stream(
-                    user, db_chat_id, content, ip_address, is_temporary
+                    user, db_chat_id, content, ip_address, is_temporary, assistant_message_id
                 )
                 for chunk in stream:
                     # Подменяем chatId на публичный для постоянных чатов
                     if not is_temporary and isinstance(chunk, dict) and "chatId" in chunk:
                         chunk["chatId"] = public_chat_id
-                    message_queue.put(chunk)
+                    
+                    # Отправляем chunk на ВСЕ SSE соединения с этим session_id
+                    if session_id in ChatService._sse_queues:
+                        for connection in ChatService._sse_queues[session_id]:
+                            connection['queue'].put(chunk)
+                
+                # Отправляем done-generation на ВСЕ SSE соединения
+                done_generation_data = {
+                    "done-generation": {
+                        "messageId": assistant_message_id,
+                        "chatId": public_chat_id
+                    }
+                }
+                if session_id in ChatService._sse_queues:
+                    for connection in ChatService._sse_queues[session_id]:
+                        connection['queue'].put(done_generation_data)
             
             thread = threading.Thread(target=generate_response)
             thread.daemon = True
@@ -160,6 +191,10 @@ class ChatStreamView(views.APIView):
     """
     GET /chat/stream
     Постоянное SSE соединение для получения ответов ассистента
+    
+    Требуемые заголовки:
+        - X-Fingerprint-Hash: Хэш устройства (обязательный)
+        - Authorization: Bearer <jwt> (опционально для авторизованных)
     """
 
     permission_classes = [AllowAny]
@@ -184,9 +219,24 @@ class ChatStreamView(views.APIView):
         Returns:
             Постоянный SSE stream
         """
+        # Шаг 3: Проверяем обязательный заголовок X-Fingerprint-Hash
+        fingerprint_hash = request.META.get("HTTP_X_FINGERPRINT_HASH")
+        if not fingerprint_hash:
+            return Response(
+                {"error": "X-Fingerprint-Hash header is required"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
         initial_chat_id = request.query_params.get("chatId")
         user = request.user if request.user.is_authenticated else None
         ip_address = self.get_client_ip(request)
+        
+        # Шаг 4-8: Получаем или создаем session_id из БД
+        session_id = ChatService.get_or_create_session_id(
+            user=user,
+            fingerprint_hash=fingerprint_hash,
+            ip_address=ip_address
+        )
         
         def event_stream():
             """
@@ -197,28 +247,74 @@ class ChatStreamView(views.APIView):
             import threading
             import time
             
-            # Создаем очередь для этого SSE соединения
+            # Создаем очередь для этого конкретного SSE соединения
             message_queue = queue.Queue()
-            session_id = str(uuid.uuid4())
+            connection_id = str(uuid.uuid4())  # Уникальный ID подключения
             
-            # Сохраняем очередь глобально для доступа из ChatMessagesView
+            # Флаги для ping-pong механизма
+            ping_pong_active = threading.Event()
+            ping_pong_active.set()  # Активен по умолчанию
+            connection_alive = threading.Event()
+            connection_alive.set()  # Соединение живое
+            pong_received = threading.Event()
+            
+            # Инициализируем глобальное хранилище SSE соединений
             if not hasattr(ChatService, '_sse_queues'):
                 ChatService._sse_queues = {}
-            ChatService._sse_queues[session_id] = {
+            
+            # Добавляем это подключение к списку для данного session_id
+            if session_id not in ChatService._sse_queues:
+                ChatService._sse_queues[session_id] = []
+            
+            connection_data = {
+                'connection_id': connection_id,
                 'queue': message_queue,
                 'user': user,
+                'fingerprint_hash': fingerprint_hash,
                 'ip': ip_address,
-                'chat_id': initial_chat_id
+                'chat_id': initial_chat_id,
+                'created_at': datetime.now(),
+                'pong_received': pong_received  # Для ping-pong
             }
+            
+            ChatService._sse_queues[session_id].append(connection_data)
+            
+            def ping_pong_monitor():
+                """
+                Отдельный поток для ping-pong механизма
+                Каждые 60 секунд отправляет ping и ждет pong 5 секунд
+                """
+                while ping_pong_active.is_set() and connection_alive.is_set():
+                    time.sleep(60)  # Ждем 60 секунд
+                    
+                    if not ping_pong_active.is_set():
+                        break
+                    
+                    # Сбрасываем флаг pong
+                    pong_received.clear()
+                    
+                    # Отправляем ping
+                    message_queue.put({'type': 'ping', 'timestamp': datetime.now().isoformat()})
+                    
+                    # Ждем pong 5 секунд
+                    if not pong_received.wait(timeout=5):
+                        # Pong не получен за 5 секунд → закрываем соединение
+                        connection_alive.clear()
+                        message_queue.put("CLOSE")
+                        break
+            
+            # Запускаем ping-pong поток
+            ping_thread = threading.Thread(target=ping_pong_monitor, daemon=True)
+            ping_thread.start()
             
             try:
                 # Отправляем начальное сообщение с sessionId
                 yield f"data: {json.dumps({'type': 'connected', 'sessionId': session_id})}\n\n"
                 
                 # Основной цикл - держим соединение открытым
-                while True:
+                while connection_alive.is_set():
                     try:
-                        # Ждем сообщение из очереди с таймаутом для heartbeat
+                        # Ждем сообщение из очереди с таймаутом
                         message = message_queue.get(timeout=30)
                         
                         if message == "CLOSE":
@@ -228,6 +324,9 @@ class ChatStreamView(views.APIView):
                         yield f"data: {json.dumps(message, ensure_ascii=False)}\n\n"
                         
                     except queue.Empty:
+                        # Проверяем жив ли connection
+                        if not connection_alive.is_set():
+                            break
                         # Отправляем heartbeat для поддержания соединения
                         yield f": heartbeat\n\n"
                         
@@ -235,14 +334,67 @@ class ChatStreamView(views.APIView):
                 # Соединение закрыто клиентом
                 pass
             finally:
-                # Очищаем очередь при закрытии соединения
+                # Останавливаем ping-pong поток
+                ping_pong_active.clear()
+                connection_alive.clear()
+                
+                # Очищаем ТОЛЬКО это конкретное подключение
                 if session_id in ChatService._sse_queues:
-                    del ChatService._sse_queues[session_id]
+                    ChatService._sse_queues[session_id] = [
+                        conn for conn in ChatService._sse_queues[session_id]
+                        if conn['connection_id'] != connection_id
+                    ]
+                    # Если больше нет подключений с этим session_id - удаляем ключ
+                    if not ChatService._sse_queues[session_id]:
+                        del ChatService._sse_queues[session_id]
 
         response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
         response["Cache-Control"] = "no-cache"
         response["X-Accel-Buffering"] = "no"
         return response
+
+
+class ChatPongView(views.APIView):
+    """
+    POST /chat/pong
+    Получение pong ответа от клиента на ping
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        """
+        Получение pong от клиента
+        
+        Request body:
+            - sessionId (required): SSE session ID
+            - connectionId (optional): Connection ID (если клиент знает)
+        
+        Returns:
+            - success: true/false
+        """
+        session_id = request.data.get("sessionId")
+        
+        if not session_id:
+            return Response(
+                {"error": "sessionId is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Находим все соединения с этим session_id и устанавливаем флаг pong
+        if hasattr(ChatService, '_sse_queues') and session_id in ChatService._sse_queues:
+            connections = ChatService._sse_queues[session_id]
+            for connection in connections:
+                # Устанавливаем флаг что pong получен
+                if 'pong_received' in connection:
+                    connection['pong_received'].set()
+            
+            return Response({"success": True}, status=status.HTTP_200_OK)
+        else:
+            return Response(
+                {"error": "Session not found or already closed"},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
 
 class ChatHistoryView(views.APIView):

@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Generator, Optional
 
 from django.conf import settings
@@ -10,6 +10,7 @@ from apps.ChatSessions.models import ChatSession
 from apps.messages.models import Message
 from apps.usageLimits.service import UsageLimitService
 from apps.anonymousUsageLimits.service import AnonymousUsageLimitService
+from apps.anonymousUsageLimits.models import AnonymousUsageLimit
 from service.llm.client import LLMClient
 from service.llm.sentx_provider import SentXProvider
 from service.obfuscation import Abfuscator
@@ -22,6 +23,91 @@ class ChatService:
 
     # In-memory storage for temporary chat sessions (for anonymous users)
     _temporary_sessions = {}
+    
+    @staticmethod
+    def get_or_create_session_id(
+        user: Optional[User],
+        fingerprint_hash: str,
+        ip_address: str
+    ) -> str:
+        """
+        Получить или создать session_id из БД
+        
+        Логика:
+        - Для авторизованных: ищем/создаем ChatSession с session_id
+        - Для неавторизованных: ищем/создаем AnonymousUsageLimit с session_id
+        
+        Args:
+            user: User объект или None
+            fingerprint_hash: Хэш устройства
+            ip_address: IP адрес
+            
+        Returns:
+            session_id строка
+        """
+        if user:
+            # Шаг 2: Авторизованный пользователь
+            # Проверяем есть ли у пользователя session_id в БД
+            if user.session_id:
+                # Есть существующий session_id - возвращаем его
+                return user.session_id
+            else:
+                # Генерируем новый уникальный session_id
+                session_id = ChatService._generate_unique_session_id()
+                
+                # Сохраняем в User
+                user.session_id = session_id
+                user.save(update_fields=['session_id'])
+                
+                return session_id
+        else:
+            # Шаг 4-6: Неавторизованный пользователь
+            today = date.today()
+            
+            # Ищем по fingerprint_hash
+            anonymous_limit = AnonymousUsageLimit.objects.filter(
+                fingerprint=fingerprint_hash,
+                last_reset_date=today
+            ).first()
+            
+            if anonymous_limit:
+                # Найдена запись
+                if anonymous_limit.session_id:
+                    # Есть session_id - возвращаем
+                    return anonymous_limit.session_id
+                else:
+                    # Нет session_id - генерируем
+                    session_id = ChatService._generate_unique_session_id()
+                    anonymous_limit.session_id = session_id
+                    anonymous_limit.save(update_fields=['session_id'])
+                    return session_id
+            else:
+                # Создаем новую запись
+                session_id = ChatService._generate_unique_session_id()
+                AnonymousUsageLimit.objects.create(
+                    fingerprint=fingerprint_hash,
+                    session_id=session_id,
+                    ip_address=ip_address,
+                    requests_made_today=0,
+                    last_reset_date=today
+                )
+                return session_id
+    
+    @staticmethod
+    def _generate_unique_session_id() -> str:
+        """
+        Генерирует уникальный session_id
+        Проверяет что он не занят в User и AnonymousUsageLimit
+        """
+        while True:
+            session_id = str(uuid.uuid4())
+            
+            # Проверяем уникальность в обеих таблицах
+            exists_in_user = User.objects.filter(session_id=session_id).exists()
+            exists_in_anon = AnonymousUsageLimit.objects.filter(session_id=session_id).exists()
+            
+            if not exists_in_user and not exists_in_anon:
+                return session_id
 
     @staticmethod
     def get_llm_client() -> LLMClient:
@@ -159,6 +245,7 @@ class ChatService:
         content: str,
         ip_address: str,
         is_temporary: bool = False,
+        assistant_message_id: Optional[str] = None,
     ) -> Generator[dict[str, Any], None, None]:
         """
         Process a chat message and stream the response
@@ -221,7 +308,10 @@ class ChatService:
 
         # Get LLM client and stream response
         client = ChatService.get_llm_client()
-        assistant_message_id = str(uuid.uuid4())
+        # Используем переданный ID или генерируем новый
+        if not assistant_message_id:
+            assistant_message_id = str(uuid.uuid4())
+        
         full_content = ""
 
         try:
