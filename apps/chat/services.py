@@ -314,18 +314,27 @@ class ChatService:
         
         full_content = ""
 
+        llm_error = None  # Флаг ошибки от LLM
+        generation_completed = False  # Флаг успешной генерации
+        
         try:
             stream = client.chat(messages, stream=True)
             
             for chunk in stream:
-                # Check for errors
+                # Check for errors from LLM
                 if "error" in chunk:
+                    llm_error = chunk["error"]
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"LLM Error: {llm_error}, messageId: {assistant_message_id}, chatId: {chat_id}")
+                    
+                    # Отправляем ошибку в SSE (если SSE живо)
                     yield {
-                        "error": chunk["error"],
+                        "error": llm_error,
                         "messageId": assistant_message_id,
                         "chatId": chat_id,
                     }
-                    return
+                    break  # Прерываем стриминг, но не return - сохраним что успели
 
                 # Extract content from chunk
                 choices = chunk.get("choices", [])
@@ -338,44 +347,73 @@ class ChatService:
                 if content_part:
                     full_content += content_part
 
-                    # Yield SSE message with accumulated content
+                    # Отправляем chunk в SSE (если SSE оборвется - пофиг, продолжаем)
+                    try:
+                        yield {
+                            "messageId": assistant_message_id,
+                            "chatId": chat_id,
+                            "role": "assistant",
+                            "content": full_content,
+                            "resolveMessage": False,
+                        }
+                    except GeneratorExit:
+                        # SSE оборвалось - продолжаем собирать ответ
+                        pass
+            
+            # Если дошли сюда без ошибки LLM - генерация успешна
+            if not llm_error:
+                generation_completed = True
+
+        except Exception as e:
+            # Ошибка на стороне сервера (не LLM)
+            import traceback
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Server Error during generation: {str(e)}, messageId: {assistant_message_id}, chatId: {chat_id}")
+            traceback.print_exc()
+            
+            # Пытаемся отправить ошибку в SSE
+            try:
+                yield {
+                    "error": f"Server error: {str(e)}",
+                    "messageId": assistant_message_id,
+                    "chatId": chat_id,
+                }
+            except:
+                pass  # SSE может быть уже закрыто
+        
+        finally:
+            # ВСЕГДА сохраняем ответ, если что-то было сгенерировано
+            if full_content:
+                try:
+                    if is_temporary:
+                        ChatService.add_temporary_message(
+                            temp_session, "assistant", full_content, assistant_message_id
+                        )
+                    else:
+                        ChatService.add_message(
+                            chat_session, "assistant", full_content, uuid.UUID(assistant_message_id)
+                        )
+                    
+                    # Increment usage count только если генерация успешна
+                    if generation_completed:
+                        ChatService.increment_usage(user, ip_address)
+                    
+                except Exception as save_error:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Failed to save assistant message: {str(save_error)}, messageId: {assistant_message_id}")
+            
+            # Отправляем финальное сообщение с resolveMessage (если SSE живо)
+            if generation_completed and full_content:
+                try:
                     yield {
                         "messageId": assistant_message_id,
                         "chatId": chat_id,
                         "role": "assistant",
-                        "content": full_content,  # Всегда отправляем полный накопленный контент
-                        "resolveMessage": False,  # Will set to True in final message
+                        "content": full_content,
+                        "resolveMessage": ChatService.should_show_resolve_message(user),
                     }
-
-            # Save assistant message
-            if is_temporary:
-                ChatService.add_temporary_message(
-                    temp_session, "assistant", full_content, assistant_message_id
-                )
-            else:
-                ChatService.add_message(
-                    chat_session, "assistant", full_content, uuid.UUID(assistant_message_id)
-                )
-
-            # Increment usage count
-            ChatService.increment_usage(user, ip_address)
-
-            # Send final message with resolveMessage flag
-            yield {
-                "messageId": assistant_message_id,
-                "chatId": chat_id,
-                "role": "assistant",
-                "content": full_content,
-                "resolveMessage": ChatService.should_show_resolve_message(user),
-            }
-
-        except Exception as e:
-            import traceback
-
-            traceback.print_exc()
-            yield {
-                "error": f"Error processing request: {str(e)}",
-                "messageId": assistant_message_id,
-                "chatId": chat_id,
-            }
+                except:
+                    pass  # SSE может быть закрыто
 
