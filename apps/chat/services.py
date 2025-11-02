@@ -187,9 +187,10 @@ class ChatService:
         if user and user.is_authenticated:
             # Check user limits
             usage_limit = UsageLimitService.get_or_create_usage_limit(user)
-            can_proceed, error_msg = UsageLimitService.check_request_limit(user)
+            result = UsageLimitService.check_request_limit(user)
+            can_proceed = result["can_make_request"]
             if not can_proceed:
-                return False, error_msg
+                return False, f"Daily limit exceeded. Requests left: {result['requests_left']}"
             return True, None
         else:
             # Check anonymous limits
