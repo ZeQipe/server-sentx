@@ -74,6 +74,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "corsheaders.middleware.CorsMiddleware",  # Moved to top for proper CORS handling
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -82,7 +83,6 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "social_django.middleware.SocialAuthExceptionMiddleware",
-    "corsheaders.middleware.CorsMiddleware",
 ]
 
 ROOT_URLCONF = 'server.urls'
@@ -374,7 +374,11 @@ CORS_ALLOWED_ORIGINS = [
 ]
 
 # In development mode, we allow all origins
-CORS_ALLOW_ALL_ORIGINS = DEBUG
+# CORS_ALLOW_ALL_ORIGINS = DEBUG  # Commented out to support credentials (wildcard '*' conflicts with credentials)
+CORS_ALLOW_ALL_ORIGINS = False
+
+# Allow credentials (cookies, authorization headers, etc.)
+CORS_ALLOW_CREDENTIALS = True
 
 # Additional CORS settings for SSE
 CORS_ALLOW_HEADERS = [
@@ -387,6 +391,7 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
+    'x-fingerprint-hash',  # Custom header for fingerprint identification
     'cache-control',
 ]
 
