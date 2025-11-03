@@ -248,8 +248,13 @@ class PersistentChatMessagesView(views.APIView):
                 
                 for chunk in stream:
                     # Для постоянных чатов подменяем chatId на обфусцированный
-                    if not is_temporary and isinstance(chunk, dict) and "chatId" in chunk:
-                        chunk["chatId"] = public_chat_id
+                    if not is_temporary and isinstance(chunk, dict):
+                        # Обычные chunk с chatId на верхнем уровне
+                        if "chatId" in chunk:
+                            chunk["chatId"] = public_chat_id
+                        # isLoadingEnd с вложенным chatId
+                        if "isLoadingEnd" in chunk and isinstance(chunk["isLoadingEnd"], dict):
+                            chunk["isLoadingEnd"]["chatId"] = public_chat_id
                     message_queue.put(chunk)
                     
             except Exception as e:

@@ -187,8 +187,13 @@ class ChatMessagesView(views.APIView):
                 )
                 for chunk in stream:
                     # Подменяем chatId на публичный для постоянных чатов
-                    if not is_temporary and isinstance(chunk, dict) and "chatId" in chunk:
-                        chunk["chatId"] = public_chat_id
+                    if not is_temporary and isinstance(chunk, dict):
+                        # Обычные chunk с chatId на верхнем уровне
+                        if "chatId" in chunk:
+                            chunk["chatId"] = public_chat_id
+                        # isLoadingEnd с вложенным chatId
+                        if "isLoadingEnd" in chunk and isinstance(chunk["isLoadingEnd"], dict):
+                            chunk["isLoadingEnd"]["chatId"] = public_chat_id
                     
                     # Отправляем chunk на ВСЕ SSE соединения с этим session_id
                     if session_id in ChatService._sse_queues:
