@@ -226,6 +226,13 @@ class PersistentChatMessagesView(views.APIView):
             "isTemporary": is_temporary
         })
         
+        # Отправляем isLoadingStart
+        message_queue.put({
+            "isLoadingStart": {
+                "chatId": public_chat_id
+            }
+        })
+        
         # Запускаем генерацию ответа в отдельном потоке
         def generate_response():
             try:

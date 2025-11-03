@@ -169,6 +169,15 @@ class ChatMessagesView(views.APIView):
             for connection in connections:
                 connection['queue'].put(start_generation_data)
             
+            # Отправляем isLoadingStart
+            loading_start_data = {
+                "isLoadingStart": {
+                    "chatId": public_chat_id
+                }
+            }
+            for connection in connections:
+                connection['queue'].put(loading_start_data)
+            
             # Запускаем генерацию ответа в отдельном потоке
             import threading
             
@@ -561,6 +570,10 @@ class ChatRegenerateView(views.APIView):
             assistant_message_id = str(uuid.uuid4())
             public_chat_id = Abfuscator.encode(salt=settings.ABFUSCATOR_ID_KEY, value=chat_session.id, min_length=17)
             full_content = ""
+            first_chunk_sent = False  # Флаг для отслеживания первого чанка
+            
+            # Отправляем isLoadingStart
+            yield f"data: {json.dumps({'isLoadingStart': {'chatId': public_chat_id}})}\n\n"
 
             try:
                 stream = client.chat(api_messages, stream=True)
@@ -577,6 +590,11 @@ class ChatRegenerateView(views.APIView):
                     delta = choices[0].get("delta", {})
                     content_part = delta.get("content")
                     if content_part:
+                        # Перед первым чанком отправляем isLoadingEnd
+                        if not first_chunk_sent:
+                            yield f"data: {json.dumps({'isLoadingEnd': {'chatId': public_chat_id}})}\n\n"
+                            first_chunk_sent = True
+                        
                         full_content += content_part
                         data = {
                             "messageId": assistant_message_id,

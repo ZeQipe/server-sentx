@@ -261,6 +261,7 @@ class ChatService:
             assistant_message_id = str(uuid.uuid4())
         
         full_content = ""
+        first_chunk_sent = False  # Флаг для отслеживания первого чанка
 
         llm_error = None  # Флаг ошибки от LLM
         generation_completed = False  # Флаг успешной генерации
@@ -293,6 +294,15 @@ class ChatService:
                 content_part = delta.get("content")
 
                 if content_part:
+                    # Перед первым чанком отправляем isLoadingEnd
+                    if not first_chunk_sent:
+                        yield {
+                            "isLoadingEnd": {
+                                "chatId": chat_id
+                            }
+                        }
+                        first_chunk_sent = True
+                    
                     full_content += content_part
 
                     # Отправляем chunk в SSE (если SSE оборвется - пофиг, продолжаем)
