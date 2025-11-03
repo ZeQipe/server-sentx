@@ -105,7 +105,7 @@ class ChatMessagesView(views.APIView):
                     )
             else:
                 # Создаем новый постоянный чат
-                chat_session = ChatService.create_chat_session(user)
+                chat_session = ChatService.create_chat_session(user, title=content)
             
             db_chat_id = chat_session.id
             # Обфусцируем ID для ответа
