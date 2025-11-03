@@ -12,6 +12,7 @@ router.register(r"messages-list", MessageViewSet, basename="message")
 
 urlpatterns = [
     # Swagger.yaml endpoints (priority)
+    path("sessions/list/", ChatSessionViewSet.as_view({'get': 'with_last_message'}), name="chat-sessions-list"),
     path("messages/", ChatMessagesView.as_view(), name="chat-messages"),
     path("messages/regenerate/", ChatRegenerateView.as_view(), name="chat-regenerate"),
     path("stream/", ChatStreamView.as_view(), name="chat-stream"),

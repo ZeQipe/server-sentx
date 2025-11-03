@@ -9,7 +9,7 @@ class AnonymousUsageLimit(models.Model):
     last_reset_date = models.DateField(auto_now_add=True)
 
     class Meta:
-        unique_together = ("ip_address", "last_reset_date")
+        unique_together = ("fingerprint", "last_reset_date")
         indexes = [
             models.Index(fields=['fingerprint', 'last_reset_date'], name='anon_fp_date_idx'),
         ]

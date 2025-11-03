@@ -299,11 +299,7 @@ class ChatService:
                 chat_session = ChatService.create_chat_session(user)
                 chat_id = str(chat_session.id)
 
-            # Save user message
-            user_message = ChatService.add_message(chat_session, "user", content)
-            user_message_id = user_message.uid
-
-            # Get chat history for context
+            # Get chat history for context (user message already saved in view)
             history = ChatService.get_chat_history(chat_session, limit=100)
             messages = [{"role": msg.role, "content": msg.content} for msg in history]
 
