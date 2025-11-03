@@ -78,8 +78,8 @@ class ChatMessagesView(views.APIView):
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
 
-        # Determine if this is an anonymous session
-        is_temporary = not user
+        # Теперь все чаты хранятся в БД (нет временных)
+        is_temporary = False
         
         if not user:
             # Неавторизованный пользователь - сохраняем в БД с anonymous_user
@@ -120,7 +120,6 @@ class ChatMessagesView(views.APIView):
             # Save user message
             user_message = ChatService.add_message(chat_session, "user", content)
             user_message_id = user_message.uid
-            is_temp = False
         else:
             # Авторизованный пользователь
             if chat_id:
@@ -146,7 +145,6 @@ class ChatMessagesView(views.APIView):
             # Save user message
             user_message = ChatService.add_message(chat_session, "user", content)
             user_message_id = user_message.uid
-            is_temp = False
 
         # Если есть активные SSE соединения, отправляем ответ на ВСЕ устройства
         if session_id and hasattr(ChatService, '_sse_queues') and session_id in ChatService._sse_queues:
@@ -192,8 +190,8 @@ class ChatMessagesView(views.APIView):
                     user, db_chat_id, content, ip_address, is_temporary, assistant_message_id
                 )
                 for chunk in stream:
-                    # Подменяем chatId на публичный для постоянных чатов
-                    if not is_temporary and isinstance(chunk, dict):
+                    # Подменяем chatId на публичный обфусцированный ID
+                    if isinstance(chunk, dict):
                         # Обычные chunk с chatId на верхнем уровне
                         if "chatId" in chunk:
                             chunk["chatId"] = public_chat_id
@@ -225,7 +223,7 @@ class ChatMessagesView(views.APIView):
         response_data = {
             "messageId": user_message_id,
             "chatId": public_chat_id,
-            "isTemporary": is_temp,
+            "isTemporary": False,
         }
 
         return Response(response_data, status=status.HTTP_200_OK)
@@ -523,7 +521,16 @@ class ChatRegenerateView(views.APIView):
     Ожидает поля: chat_session_id (обфусцированный), message_id (uid сообщения ассистента)
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
+    
+    def get_client_ip(self, request):
+        """Get client IP address"""
+        x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(",")[0]
+        else:
+            ip = request.META.get("REMOTE_ADDR")
+        return ip
 
     def post(self, request):
         chat_session_id = request.data.get("chat_session_id")
@@ -544,8 +551,27 @@ class ChatRegenerateView(views.APIView):
             return Response({"error": "Invalid chat_session_id format"}, status=status.HTTP_400_BAD_REQUEST)
 
         # Verify chat session ownership
+        user = request.user
         try:
-            chat_session = ChatSession.objects.get(id=deobfuscated_id, user=request.user)
+            if user and user.is_authenticated:
+                # Авторизованный пользователь
+                chat_session = ChatSession.objects.get(id=deobfuscated_id, user=user)
+            else:
+                # Неавторизованный пользователь
+                from apps.anonymousUsageLimits.service import AnonymousUsageLimitService
+                
+                fingerprint_hash = request.META.get("HTTP_X_FINGERPRINT_HASH")
+                if not fingerprint_hash:
+                    return Response(
+                        {"error": "X-Fingerprint-Hash header is required for anonymous users"},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                
+                ip_address = self.get_client_ip(request)
+                anonymous_user = AnonymousUsageLimitService.get_or_create_anonymous_usage_limit(
+                    ip_address, fingerprint_hash
+                )
+                chat_session = ChatSession.objects.get(id=deobfuscated_id, anonymous_user=anonymous_user)
         except ChatSession.DoesNotExist:
             return Response({"error": "Chat session not found"}, status=status.HTTP_404_NOT_FOUND)
 

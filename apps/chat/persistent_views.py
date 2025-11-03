@@ -178,8 +178,8 @@ class PersistentChatMessagesView(views.APIView):
                 status=status.HTTP_429_TOO_MANY_REQUESTS
             )
         
-        # Определяем тип чата
-        is_temporary = not user
+        # Теперь все чаты хранятся в БД (нет временных)
+        is_temporary = False
         
         # Создаем или получаем chat_id
         if not user:
@@ -259,7 +259,7 @@ class PersistentChatMessagesView(views.APIView):
             "chatId": public_chat_id,
             "role": "user",
             "content": content,
-            "isTemporary": is_temporary
+            "isTemporary": False
         })
         
         # Отправляем isLoadingStart
@@ -278,7 +278,7 @@ class PersistentChatMessagesView(views.APIView):
                 )
                 
                 for chunk in stream:
-                    # Подменяем chatId на обфусцированный
+                    # Подменяем chatId на публичный обфусцированный ID
                     if isinstance(chunk, dict):
                         # Обычные chunk с chatId на верхнем уровне
                         if "chatId" in chunk:
