@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.db.models import Max, Prefetch
+from django.db.models import Max
 from django.http import Http404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -56,34 +56,19 @@ class ChatSessionViewSet(ObfuscatedLookupMixin, viewsets.ModelViewSet):
             last_message_time=Max("messages__created_at")
         ).order_by("-last_message_time")
 
-        # Prefetch the last message for each chat session
-        chat_sessions = chat_sessions.prefetch_related(
-            Prefetch(
-                "messages",
-                queryset=Message.objects.order_by("-created_at"),
-                to_attr="last_message_list",
-            )
-        )
-
         # Prepare the response data
         result = []
+        salt = settings.ABFUSCATOR_ID_KEY
         for session in chat_sessions:
-            session_data = ChatSessionSerializer(session).data
+            obfuscated_id = Abfuscator.encode(salt=salt, value=session.id)
             
             # Логируем обфусцированный ID
-            print(f"Session DB ID: {session.id} -> Obfuscated ID: {session_data.get('id')}")
+            print(f"Session DB ID: {session.id} -> Obfuscated ID: {obfuscated_id}")
 
-            # Add the last message if it exists
-            last_message = (
-                session.last_message_list[0] if session.last_message_list else None
-            )
-
-            if last_message:
-                session_data["last_message"] = MessageSerializer(last_message).data
-            else:
-                session_data["last_message"] = None
-
-            result.append(session_data)
+            result.append({
+                "chatId": obfuscated_id,
+                "title": session.title
+            })
 
         print(f"Returning {len(result)} chat sessions with obfuscated IDs")
         return Response(result)
