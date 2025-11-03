@@ -60,7 +60,7 @@ class ChatSessionViewSet(ObfuscatedLookupMixin, viewsets.ModelViewSet):
         result = []
         salt = settings.ABFUSCATOR_ID_KEY
         for session in chat_sessions:
-            obfuscated_id = Abfuscator.encode(salt=salt, value=session.id)
+            obfuscated_id = Abfuscator.encode(salt=salt, value=session.id, min_length=17)
             
             # Логируем обфусцированный ID
             print(f"Session DB ID: {session.id} -> Obfuscated ID: {obfuscated_id}")
