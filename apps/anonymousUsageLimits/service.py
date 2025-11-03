@@ -28,40 +28,41 @@ class AnonymousUsageLimitService:
         """
         today = date.today()
         
-        # Пытаемся найти по fingerprint_hash (если передан)
+        # Ищем или создаем по fingerprint_hash
         if fingerprint_hash:
-            limit = AnonymousUsageLimit.objects.filter(
+            limit, created = AnonymousUsageLimit.objects.get_or_create(
                 fingerprint=fingerprint_hash,
-                last_reset_date=today
-            ).first()
+                last_reset_date=today,
+                defaults={
+                    'ip_address': ip_address,
+                    'requests_made_today': 0
+                }
+            )
             
-            if limit:
-                # Проверяем дату на всякий случай
-                if limit.last_reset_date != today:
-                    limit.requests_made_today = 0
-                    limit.last_reset_date = today
-                    limit.save()
-                return limit
+            if not created and limit.last_reset_date != today:
+                limit.requests_made_today = 0
+                limit.last_reset_date = today
+                limit.save()
+                
+            return limit
         
-        # Fallback: ищем по IP или создаем новый
-        limit, created = AnonymousUsageLimit.objects.get_or_create(
+        # Fallback: если fingerprint не передан, ищем по IP
+        limit = AnonymousUsageLimit.objects.filter(
             ip_address=ip_address,
-            last_reset_date=today,
-            defaults={
-                'fingerprint': fingerprint_hash,
-                'requests_made_today': 0
-            }
-        )
+            last_reset_date=today
+        ).first()
         
-        if not created and limit.last_reset_date != today:
+        if not limit:
+            # Создаем новую запись без fingerprint
+            limit = AnonymousUsageLimit.objects.create(
+                ip_address=ip_address,
+                last_reset_date=today,
+                requests_made_today=0
+            )
+        elif limit.last_reset_date != today:
             limit.requests_made_today = 0
             limit.last_reset_date = today
             limit.save()
-        
-        # Если fingerprint был передан, но не был сохранен - обновляем
-        if fingerprint_hash and not limit.fingerprint:
-            limit.fingerprint = fingerprint_hash
-            limit.save(update_fields=['fingerprint'])
             
         return limit
 

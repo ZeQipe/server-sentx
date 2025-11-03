@@ -20,9 +20,6 @@ User = get_user_model()
 
 class ChatService:
     """Service for handling chat operations"""
-
-    # In-memory storage for temporary chat sessions (for anonymous users)
-    _temporary_sessions = {}
     
     @staticmethod
     def get_or_create_session_id(
@@ -117,27 +114,17 @@ class ChatService:
 
     @staticmethod
     @transaction.atomic
-    def create_chat_session(user: Optional[User] = None, title: str = "") -> ChatSession:
-        """Create a new chat session"""
-        return ChatSession.objects.create(user=user, title=title)
-
-    @staticmethod
-    def get_or_create_temporary_session(temp_chat_id: str) -> dict:
-        """
-        Get or create a temporary chat session for anonymous users
-
-        Args:
-            temp_chat_id: Temporary chat ID
-
-        Returns:
-            Temporary session dict with messages list
-        """
-        if temp_chat_id not in ChatService._temporary_sessions:
-            ChatService._temporary_sessions[temp_chat_id] = {
-                "messages": [],
-                "created_at": datetime.now(),
-            }
-        return ChatService._temporary_sessions[temp_chat_id]
+    def create_chat_session(
+        user: Optional[User] = None, 
+        anonymous_user = None,
+        title: str = ""
+    ) -> ChatSession:
+        """Create a new chat session for authorized or anonymous user"""
+        return ChatSession.objects.create(
+            user=user,
+            anonymous_user=anonymous_user,
+            title=title
+        )
 
     @staticmethod
     @transaction.atomic
@@ -153,28 +140,9 @@ class ChatService:
         )
 
     @staticmethod
-    def add_temporary_message(temp_session: dict, role: str, content: str, message_id: str):
-        """Add a message to a temporary session"""
-        temp_session["messages"].append(
-            {
-                "messageId": message_id,
-                "role": role,
-                "content": content,
-                "createdAt": datetime.now().isoformat(),
-            }
-        )
-
-    @staticmethod
     def get_chat_history(chat_session: ChatSession, limit: int = 100) -> list[Message]:
         """Get chat history (last N messages)"""
         return list(chat_session.messages.order_by("-created_at")[:limit][::-1])
-
-    @staticmethod
-    def get_temporary_chat_history(temp_chat_id: str, limit: int = 100) -> list[dict]:
-        """Get temporary chat history"""
-        temp_session = ChatService._temporary_sessions.get(temp_chat_id, {})
-        messages = temp_session.get("messages", [])
-        return messages[-limit:]
 
     @staticmethod
     def check_usage_limits(user: Optional[User], ip_address: str) -> tuple[bool, Optional[str]]:
@@ -271,37 +239,20 @@ class ChatService:
             }
             return
 
-        # Get or create chat session
-        if is_temporary:
-            temp_session = ChatService.get_or_create_temporary_session(chat_id)
-            user_message_id = str(uuid.uuid4())
-            ChatService.add_temporary_message(temp_session, "user", content, user_message_id)
-            
-            # Build messages for LLM
-            messages = [
-                {"role": msg["role"], "content": msg["content"]}
-                for msg in temp_session["messages"]
-            ]
+        # Get chat session (user message already saved in view)
+        if chat_id:
+            try:
+                chat_session = ChatSession.objects.get(id=chat_id)
+            except ChatSession.DoesNotExist:
+                yield {"error": "Chat session not found", "messageId": "", "chatId": ""}
+                return
         else:
-            # Permanent session
-            if chat_id:
-                try:
-                    if user:
-                        chat_session = ChatSession.objects.get(id=chat_id, user=user)
-                    else:
-                        yield {"error": "Unauthorized", "messageId": "", "chatId": ""}
-                        return
-                except ChatSession.DoesNotExist:
-                    yield {"error": "Chat session not found", "messageId": "", "chatId": ""}
-                    return
-            else:
-                # Create new session
-                chat_session = ChatService.create_chat_session(user)
-                chat_id = str(chat_session.id)
+            yield {"error": "Chat session ID is required", "messageId": "", "chatId": ""}
+            return
 
-            # Get chat history for context (user message already saved in view)
-            history = ChatService.get_chat_history(chat_session, limit=100)
-            messages = [{"role": msg.role, "content": msg.content} for msg in history]
+        # Get chat history for context
+        history = ChatService.get_chat_history(chat_session, limit=100)
+        messages = [{"role": msg.role, "content": msg.content} for msg in history]
 
         # Get LLM client and stream response
         client = ChatService.get_llm_client()
@@ -383,14 +334,9 @@ class ChatService:
             # ВСЕГДА сохраняем ответ, если что-то было сгенерировано
             if full_content:
                 try:
-                    if is_temporary:
-                        ChatService.add_temporary_message(
-                            temp_session, "assistant", full_content, assistant_message_id
-                        )
-                    else:
-                        ChatService.add_message(
-                            chat_session, "assistant", full_content, uuid.UUID(assistant_message_id)
-                        )
+                    ChatService.add_message(
+                        chat_session, "assistant", full_content, uuid.UUID(assistant_message_id)
+                    )
                     
                     # Increment usage count только если генерация успешна
                     if generation_completed:

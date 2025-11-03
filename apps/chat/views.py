@@ -78,19 +78,43 @@ class ChatMessagesView(views.APIView):
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
 
-        # Determine if this is a temporary session
+        # Determine if this is an anonymous session
         is_temporary = not user
         
         if not user:
-            # Неавторизованный пользователь - всегда временный чат
-            if not chat_id:
-                chat_id = f"temp_{uuid.uuid4()}"
-            temp_session = ChatService.get_or_create_temporary_session(chat_id)
-            user_message_id = str(uuid.uuid4())
-            ChatService.add_temporary_message(temp_session, "user", content, user_message_id)
-            public_chat_id = chat_id
-            is_temp = True
-            db_chat_id = chat_id
+            # Неавторизованный пользователь - сохраняем в БД с anonymous_user
+            from apps.anonymousUsageLimits.service import AnonymousUsageLimitService
+            
+            fingerprint_hash = request.META.get("HTTP_X_FINGERPRINT_HASH")
+            anonymous_user = AnonymousUsageLimitService.get_or_create_anonymous_usage_limit(
+                ip_address, fingerprint_hash
+            )
+            
+            if chat_id:
+                # Продолжаем существующий чат
+                try:
+                    chat_session = ChatSession.objects.get(id=chat_id, anonymous_user=anonymous_user)
+                except ChatSession.DoesNotExist:
+                    return Response(
+                        {"error": "Chat session not found"},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+            else:
+                # Создаем новый чат для анонима
+                chat_session = ChatService.create_chat_session(
+                    anonymous_user=anonymous_user, 
+                    title=content
+                )
+            
+            db_chat_id = chat_session.id
+            public_chat_id = Abfuscator.encode(
+                salt=settings.ABFUSCATOR_ID_KEY, value=chat_session.id, min_length=17
+            )
+            
+            # Save user message
+            user_message = ChatService.add_message(chat_session, "user", content)
+            user_message_id = user_message.uid
+            is_temp = False
         else:
             # Авторизованный пользователь
             if chat_id:
@@ -105,7 +129,7 @@ class ChatMessagesView(views.APIView):
                     )
             else:
                 # Создаем новый постоянный чат
-                chat_session = ChatService.create_chat_session(user, title=content)
+                chat_session = ChatService.create_chat_session(user=user, title=content)
             
             db_chat_id = chat_session.id
             # Обфусцируем ID для ответа
@@ -423,42 +447,53 @@ class ChatHistoryView(views.APIView):
             )
 
         user = request.user if request.user.is_authenticated else None
-        is_temporary = chat_id.startswith("temp_")
         public_chat_id = chat_id
 
-        if is_temporary:
-            # Get temporary chat history
-            messages = ChatService.get_temporary_chat_history(chat_id)
-            response_data = {"chatId": public_chat_id, "messages": messages}
-        else:
-            # Get permanent chat history
-            try:
-                if user:
-                    db_chat_id = Abfuscator.decode(salt=settings.ABFUSCATOR_ID_KEY, value=chat_id)
-                    chat_session = ChatSession.objects.get(id=db_chat_id, user=user)
-                else:
-                    return Response(
-                        {"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED
-                    )
-            except ChatSession.DoesNotExist:
-                return Response(
-                    {"error": "Chat session not found"}, status=status.HTTP_404_NOT_FOUND
+        # Get chat history from DB
+        try:
+            db_chat_id = Abfuscator.decode(salt=settings.ABFUSCATOR_ID_KEY, value=chat_id)
+            
+            if user:
+                # Авторизованный пользователь
+                chat_session = ChatSession.objects.get(id=db_chat_id, user=user)
+            else:
+                # Неавторизованный пользователь
+                from apps.anonymousUsageLimits.service import AnonymousUsageLimitService
+                
+                fingerprint_hash = request.META.get("HTTP_X_FINGERPRINT_HASH")
+                ip_address = self.get_client_ip(request)
+                anonymous_user = AnonymousUsageLimitService.get_or_create_anonymous_usage_limit(
+                    ip_address, fingerprint_hash
                 )
+                chat_session = ChatSession.objects.get(id=db_chat_id, anonymous_user=anonymous_user)
+        except ChatSession.DoesNotExist:
+            return Response(
+                {"error": "Chat session not found"}, status=status.HTTP_404_NOT_FOUND
+            )
 
-            history = ChatService.get_chat_history(chat_session)
-            messages = [
-                {
-                    "messageId": msg.uid,
-                    "chatId": public_chat_id,
-                    "role": msg.role,
-                    "content": msg.content,
-                    "createdAt": msg.created_at.isoformat(),
-                }
-                for msg in history
-            ]
-            response_data = {"chatId": public_chat_id, "messages": messages}
+        history = ChatService.get_chat_history(chat_session)
+        messages = [
+            {
+                "messageId": msg.uid,
+                "chatId": public_chat_id,
+                "role": msg.role,
+                "content": msg.content,
+                "createdAt": msg.created_at.isoformat(),
+            }
+            for msg in history
+        ]
+        response_data = {"chatId": public_chat_id, "messages": messages}
 
         return Response(response_data, status=status.HTTP_200_OK)
+    
+    def get_client_ip(self, request):
+        """Get client IP address"""
+        x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(",")[0]
+        else:
+            ip = request.META.get("REMOTE_ADDR")
+        return ip
 
 
 class ChatRegenerateView(views.APIView):
