@@ -91,9 +91,15 @@ class ChatMessagesView(views.APIView):
             )
             
             if chat_id:
-                # Продолжаем существующий чат
+                # Продолжаем существующий чат - деобфусцируем ID
                 try:
-                    chat_session = ChatSession.objects.get(id=chat_id, anonymous_user=anonymous_user)
+                    db_chat_id = Abfuscator.decode(salt=settings.ABFUSCATOR_ID_KEY, value=chat_id)
+                    chat_session = ChatSession.objects.get(id=db_chat_id, anonymous_user=anonymous_user)
+                except (ValueError, Exception):
+                    return Response(
+                        {"error": "Invalid chat_id format"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
                 except ChatSession.DoesNotExist:
                     return Response(
                         {"error": "Chat session not found"},

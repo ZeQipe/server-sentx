@@ -183,13 +183,44 @@ class PersistentChatMessagesView(views.APIView):
         
         # Создаем или получаем chat_id
         if not user:
-            # Неавторизованный пользователь - временный чат
-            if not chat_id:
-                chat_id = f"temp_{uuid.uuid4()}"
-            temp_session = ChatService.get_or_create_temporary_session(chat_id)
-            user_message_id = str(uuid.uuid4())
-            ChatService.add_temporary_message(temp_session, "user", content, user_message_id)
-            public_chat_id = chat_id
+            # Неавторизованный пользователь - сохраняем в БД с anonymous_user
+            from apps.anonymousUsageLimits.service import AnonymousUsageLimitService
+            
+            fingerprint_hash = request.META.get("HTTP_X_FINGERPRINT_HASH")
+            anonymous_user = AnonymousUsageLimitService.get_or_create_anonymous_usage_limit(
+                ip_address, fingerprint_hash
+            )
+            
+            if chat_id:
+                # Продолжаем существующий чат - деобфусцируем ID
+                try:
+                    db_chat_id = Abfuscator.decode(salt=settings.ABFUSCATOR_ID_KEY, value=chat_id)
+                    chat_session = ChatSession.objects.get(id=db_chat_id, anonymous_user=anonymous_user)
+                except (ValueError, Exception):
+                    return Response(
+                        {"error": "Invalid chat_id format"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                except ChatSession.DoesNotExist:
+                    return Response(
+                        {"error": "Chat session not found"},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+            else:
+                # Создаем новый чат для анонима
+                chat_session = ChatService.create_chat_session(
+                    anonymous_user=anonymous_user, 
+                    title=content
+                )
+            
+            db_chat_id = chat_session.id
+            public_chat_id = Abfuscator.encode(
+                salt=settings.ABFUSCATOR_ID_KEY, value=chat_session.id, min_length=17
+            )
+            
+            # Сохраняем сообщение пользователя
+            user_message = ChatService.add_message(chat_session, "user", content)
+            user_message_id = user_message.uid
         else:
             # Авторизованный пользователь
             if chat_id:
@@ -197,14 +228,19 @@ class PersistentChatMessagesView(views.APIView):
                 try:
                     db_chat_id = Abfuscator.decode(salt=settings.ABFUSCATOR_ID_KEY, value=chat_id)
                     chat_session = ChatSession.objects.get(id=db_chat_id, user=user)
-                except:
+                except (ValueError, Exception):
+                    return Response(
+                        {"error": "Invalid chat_id format"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                except ChatSession.DoesNotExist:
                     return Response(
                         {"error": "Chat session not found"},
                         status=status.HTTP_404_NOT_FOUND
                     )
             else:
                 # Создаем новый чат
-                chat_session = ChatService.create_chat_session(user)
+                chat_session = ChatService.create_chat_session(user=user, title=content)
                 db_chat_id = chat_session.id
             
             # Обфусцируем для клиента
@@ -237,18 +273,13 @@ class PersistentChatMessagesView(views.APIView):
         def generate_response():
             try:
                 # Используем существующий сервис для генерации
-                if is_temporary:
-                    effective_chat_id = chat_id
-                else:
-                    effective_chat_id = db_chat_id
-                
                 stream = ChatService.process_chat_stream(
-                    user, effective_chat_id, content, ip_address, is_temporary
+                    user, db_chat_id, content, ip_address, is_temporary
                 )
                 
                 for chunk in stream:
-                    # Для постоянных чатов подменяем chatId на обфусцированный
-                    if not is_temporary and isinstance(chunk, dict):
+                    # Подменяем chatId на обфусцированный
+                    if isinstance(chunk, dict):
                         # Обычные chunk с chatId на верхнем уровне
                         if "chatId" in chunk:
                             chunk["chatId"] = public_chat_id
