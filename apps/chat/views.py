@@ -91,10 +91,9 @@ class ChatMessagesView(views.APIView):
             )
             
             if chat_id:
-                # Продолжаем существующий чат - деобфусцируем ID
+                # Продолжаем существующий чат (chat_id уже деобфусцирован через сериализатор)
                 try:
-                    db_chat_id = Abfuscator.decode(salt=settings.ABFUSCATOR_ID_KEY, value=chat_id)
-                    chat_session = ChatSession.objects.get(id=db_chat_id, anonymous_user=anonymous_user)
+                    chat_session = ChatSession.objects.get(id=chat_id, anonymous_user=anonymous_user)
                 except (ValueError, Exception):
                     return Response(
                         {"error": "Invalid chat_id format"},
