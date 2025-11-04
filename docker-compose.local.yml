@@ -3,21 +3,55 @@ version: '3.8'
 services:
   db:
     image: postgres:15
+    container_name: sentx-db-local
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data/
     environment:
-      POSTGRES_DB: sentx_db
-      POSTGRES_USER: ${POSTGRES_USER:-sentx}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sentx123}
-    ports:
-      - 5432:5432
+      POSTGRES_DB: sentx
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_password
     restart: always
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sentx}"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 5
 
+  web:
+    build: .
+    container_name: sentx-web-local
+    command: >
+      bash -c "python manage.py migrate &&
+               gunicorn server.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 100 --worker-class gthread --timeout 300"
+    volumes:
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres_password@db:5432/sentx
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: always
+
+  nginx:
+    image: nginx:alpine
+    container_name: sentx-nginx-local
+    ports:
+      - "127.0.0.1:80:80"
+    volumes:
+      - ./nginx/nginx.local.conf:/etc/nginx/nginx.conf:ro
+      - static_volume:/app/staticfiles:ro
+      - media_volume:/app/media:ro
+    depends_on:
+      - web
+    restart: always
+
 volumes:
   postgres_data:
+  static_volume:
+  media_volume:
 
