@@ -38,18 +38,13 @@ class ChatSessionViewSet(ObfuscatedLookupMixin, viewsets.ModelViewSet):
             # Авторизованный пользователь
             return ChatSession.objects.filter(user=user)
         else:
-            # Неавторизованный пользователь
-            from apps.anonymousUsageLimits.service import AnonymousUsageLimitService
-            
+            # Неавторизованный пользователь - фильтруем по fingerprint
             fingerprint_hash = self.request.META.get("HTTP_X_FINGERPRINT_HASH")
             if not fingerprint_hash:
                 return ChatSession.objects.none()
             
-            ip_address = self.get_client_ip()
-            anonymous_user = AnonymousUsageLimitService.get_or_create_anonymous_usage_limit(
-                ip_address, fingerprint_hash
-            )
-            return ChatSession.objects.filter(anonymous_user=anonymous_user)
+            # Ищем все чаты с этим fingerprint (независимо от конкретной записи AnonymousUsageLimit)
+            return ChatSession.objects.filter(anonymous_user__fingerprint=fingerprint_hash)
 
     def perform_create(self, serializer):
         validated_data = serializer.validated_data
@@ -79,29 +74,18 @@ class ChatSessionViewSet(ObfuscatedLookupMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=["get"])
     def with_last_message(self, request):
         """Get all chat sessions with their last message"""
-        print(f"\n=== with_last_message request ===")
-        
         user = request.user
         if user and user.is_authenticated:
             # Авторизованный пользователь
-            print(f"User: {user.id}")
             chat_sessions = ChatSession.objects.filter(user=user)
         else:
-            # Неавторизованный пользователь
-            print("Anonymous user")
-            from apps.anonymousUsageLimits.service import AnonymousUsageLimitService
-            
+            # Неавторизованный пользователь - фильтруем по fingerprint
             fingerprint_hash = request.META.get("HTTP_X_FINGERPRINT_HASH")
             if not fingerprint_hash:
                 return Response([], status=status.HTTP_200_OK)
             
-            ip_address = self.get_client_ip()
-            anonymous_user = AnonymousUsageLimitService.get_or_create_anonymous_usage_limit(
-                ip_address, fingerprint_hash
-            )
-            chat_sessions = ChatSession.objects.filter(anonymous_user=anonymous_user)
-        
-        print(f"Chat sessions count: {chat_sessions.count()}")
+            # Ищем все чаты с этим fingerprint (независимо от конкретной записи AnonymousUsageLimit)
+            chat_sessions = ChatSession.objects.filter(anonymous_user__fingerprint=fingerprint_hash)
 
         # For each chat session, prefetch the latest message
         chat_sessions = chat_sessions.annotate(
@@ -113,16 +97,12 @@ class ChatSessionViewSet(ObfuscatedLookupMixin, viewsets.ModelViewSet):
         salt = settings.ABFUSCATOR_ID_KEY
         for session in chat_sessions:
             obfuscated_id = Abfuscator.encode(salt=salt, value=session.id, min_length=17)
-            
-            # Логируем обфусцированный ID
-            print(f"Session DB ID: {session.id} -> Obfuscated ID: {obfuscated_id}")
 
             result.append({
                 "chatId": obfuscated_id,
                 "title": session.title
             })
 
-        print(f"Returning {len(result)} chat sessions with obfuscated IDs")
         return Response(result)
     
     def get_client_ip(self):
@@ -157,18 +137,13 @@ class MessageViewSet(ObfuscatedLookupMixin, viewsets.ReadOnlyModelViewSet):
             # Авторизованный пользователь
             return Message.objects.filter(chat_session__user=user)
         else:
-            # Неавторизованный пользователь
-            from apps.anonymousUsageLimits.service import AnonymousUsageLimitService
-            
+            # Неавторизованный пользователь - фильтруем по fingerprint
             fingerprint_hash = self.request.META.get("HTTP_X_FINGERPRINT_HASH")
             if not fingerprint_hash:
                 return Message.objects.none()
             
-            ip_address = self.get_client_ip()
-            anonymous_user = AnonymousUsageLimitService.get_or_create_anonymous_usage_limit(
-                ip_address, fingerprint_hash
-            )
-            return Message.objects.filter(chat_session__anonymous_user=anonymous_user)
+            # Ищем все сообщения из чатов с этим fingerprint
+            return Message.objects.filter(chat_session__anonymous_user__fingerprint=fingerprint_hash)
     
     def get_client_ip(self):
         """Get client IP address"""

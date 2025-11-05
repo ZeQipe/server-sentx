@@ -1,9 +1,10 @@
 import json
 import uuid
+import time
 from datetime import datetime
 from typing import Any, Generator, Optional
 
-import requests
+import httpx
 from django.conf import settings
 
 from .interface import LLMProviderInterface
@@ -46,14 +47,14 @@ class SentXProvider(LLMProviderInterface):
         except Exception:
             return False
 
-    def send_message(
+    async def send_message(
         self,
         messages: list[dict[str, str]],
         stream: bool = False,
         file: Optional[Any] = None,
     ) -> dict[str, Any] | Generator[dict[str, Any], None, None]:
         """
-        Send a message to SentX API
+        Send a message to SentX API (async with httpx)
 
         Args:
             messages: List of messages with role and content
@@ -69,10 +70,11 @@ class SentXProvider(LLMProviderInterface):
             "Content-Type": "application/json",
         }
 
+        # Всегда получаем полный ответ (stream=False)
         payload = {
             "model": self.model,
             "messages": messages,
-            "stream": stream,
+            "stream": False,
         }
 
         # Logging request
@@ -82,15 +84,19 @@ class SentXProvider(LLMProviderInterface):
         print(f"Model: {self.model}")
         print(f"Messages count: {len(messages)}")
         print(f"Messages: {json.dumps(messages, ensure_ascii=False)[:500]}")
-        print(f"Stream: {stream}")
         print("=" * 80 + "\n")
 
-        if stream:
-            return self._stream_response(url, headers, payload)
-        else:
-            response = requests.post(url, headers=headers, json=payload, timeout=600)
+        start_time = time.time()
+        print(f"[LLM] Sending async request to {url}...")
+        
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            response = await client.post(url, headers=headers, json=payload)
+            elapsed = time.time() - start_time
+            print(f"[LLM] Response received in {elapsed:.2f}s, status: {response.status_code}")
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            print(f"[LLM] Response parsed. Keys: {list(result.keys())}")
+            return result
 
     def _stream_response(
         self, url: str, headers: dict, payload: dict

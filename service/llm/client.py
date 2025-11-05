@@ -15,14 +15,14 @@ class LLMClient:
         """
         self.provider = provider
 
-    def chat(
+    async def chat(
         self,
         messages: list[dict[str, str]],
         stream: bool = False,
         file: Optional[Any] = None,
     ) -> dict[str, Any] | Generator[dict[str, Any], None, None]:
         """
-        Send a chat message
+        Send a chat message (async)
 
         Args:
             messages: List of messages with role and content
@@ -32,7 +32,7 @@ class LLMClient:
         Returns:
             Response dict or generator for streaming
         """
-        return self.provider.send_message(messages, stream, file)
+        return await self.provider.send_message(messages, stream, file)
 
     def validate_connection(self) -> bool:
         """

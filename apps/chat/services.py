@@ -254,73 +254,88 @@ class ChatService:
         history = ChatService.get_chat_history(chat_session, limit=100)
         messages = [{"role": msg.role, "content": msg.content} for msg in history]
 
-        # Get LLM client and stream response
+        # Get LLM client and get full response
         client = ChatService.get_llm_client()
         # Используем переданный ID или генерируем новый
         if not assistant_message_id:
             assistant_message_id = str(uuid.uuid4())
         
         full_content = ""
-        first_chunk_sent = False  # Флаг для отслеживания первого чанка
-
         llm_error = None  # Флаг ошибки от LLM
         generation_completed = False  # Флаг успешной генерации
         
         try:
-            stream = client.chat(messages, stream=True)
+            # Получаем ПОЛНЫЙ ответ сразу (через async httpx в глобальном event loop)
+            print(f"[SERVICE] Calling async LLM client for message_id={assistant_message_id}")
+            from service.llm.async_loop import run_async
+            response = run_async(client.chat(messages, stream=False))
+            print(f"[SERVICE] LLM response received for message_id={assistant_message_id}")
             
-            for chunk in stream:
-                # Check for errors from LLM
-                if "error" in chunk:
-                    llm_error = chunk["error"]
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.error(f"LLM Error: {llm_error}, messageId: {assistant_message_id}, chatId: {chat_id}")
-                    
-                    # Отправляем ошибку в SSE (если SSE живо)
+            # Проверяем на ошибки
+            if "error" in response:
+                llm_error = response["error"]
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"LLM Error: {llm_error}, messageId: {assistant_message_id}, chatId: {chat_id}")
+                
+                yield {
+                    "error": llm_error,
+                    "messageId": assistant_message_id,
+                    "chatId": chat_id,
+                }
+                return
+            
+            # Извлекаем текст ответа
+            choices = response.get("choices", [])
+            if not choices:
+                yield {
+                    "error": "No response from LLM",
+                    "messageId": assistant_message_id,
+                    "chatId": chat_id,
+                }
+                return
+            
+            message = choices[0].get("message", {})
+            full_content = message.get("content", "")
+            
+            if not full_content:
+                yield {
+                    "error": "Empty response from LLM",
+                    "messageId": assistant_message_id,
+                    "chatId": chat_id,
+                }
+                return
+            
+            # Отправляем isLoadingEnd перед первым чанком
+            yield {
+                "isLoadingEnd": {
+                    "chatId": chat_id
+                }
+            }
+            
+            # Дробим на чанки по 4 символа и отправляем
+            chunk_size = 4
+            accumulated_content = ""
+            
+            for i in range(0, len(full_content), chunk_size):
+                chunk_text = full_content[i:i + chunk_size]
+                accumulated_content += chunk_text
+                
+                # Отправляем накопленный контент
+                try:
                     yield {
-                        "error": llm_error,
                         "messageId": assistant_message_id,
                         "chatId": chat_id,
+                        "role": "assistant",
+                        "content": accumulated_content,
+                        "resolveMessage": False,
                     }
-                    break  # Прерываем стриминг, но не return - сохраним что успели
-
-                # Extract content from chunk
-                choices = chunk.get("choices", [])
-                if not choices:
-                    continue
-
-                delta = choices[0].get("delta", {})
-                content_part = delta.get("content")
-
-                if content_part:
-                    # Перед первым чанком отправляем isLoadingEnd
-                    if not first_chunk_sent:
-                        yield {
-                            "isLoadingEnd": {
-                                "chatId": chat_id
-                            }
-                        }
-                        first_chunk_sent = True
-                    
-                    full_content += content_part
-
-                    # Отправляем chunk в SSE (если SSE оборвется - пофиг, продолжаем)
-                    try:
-                        yield {
-                            "messageId": assistant_message_id,
-                            "chatId": chat_id,
-                            "role": "assistant",
-                            "content": full_content,
-                            "resolveMessage": False,
-                        }
-                    except GeneratorExit:
-                        # SSE оборвалось - продолжаем собирать ответ
-                        pass
+                except GeneratorExit:
+                    # SSE оборвалось
+                    pass
             
-            # Если дошли сюда без ошибки LLM - генерация успешна
-            if not llm_error:
-                generation_completed = True
+            # Генерация успешна
+            generation_completed = True
 
         except Exception as e:
             # Ошибка на стороне сервера (не LLM)

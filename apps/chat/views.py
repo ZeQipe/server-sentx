@@ -185,34 +185,49 @@ class ChatMessagesView(views.APIView):
             import threading
             
             def generate_response():
-                stream = ChatService.process_chat_stream(
-                    user, db_chat_id, content, ip_address, is_temporary, assistant_message_id
-                )
-                for chunk in stream:
-                    # Подменяем chatId на публичный обфусцированный ID
-                    if isinstance(chunk, dict):
-                        # Обычные chunk с chatId на верхнем уровне
-                        if "chatId" in chunk:
-                            chunk["chatId"] = public_chat_id
-                        # isLoadingEnd с вложенным chatId
-                        if "isLoadingEnd" in chunk and isinstance(chunk["isLoadingEnd"], dict):
-                            chunk["isLoadingEnd"]["chatId"] = public_chat_id
+                try:
+                    print(f"[THREAD] Starting generation for message_id={assistant_message_id}, chat_id={db_chat_id}")
+                    stream = ChatService.process_chat_stream(
+                        user, db_chat_id, content, ip_address, is_temporary, assistant_message_id
+                    )
+                    chunk_count = 0
+                    for chunk in stream:
+                        chunk_count += 1
+                        if chunk_count == 1:
+                            print(f"[THREAD] First chunk received for message_id={assistant_message_id}")
+                        if chunk_count % 10 == 0:
+                            print(f"[THREAD] Chunk {chunk_count} for message_id={assistant_message_id}")
+                        
+                        # Подменяем chatId на публичный обфусцированный ID
+                        if isinstance(chunk, dict):
+                            # Обычные chunk с chatId на верхнем уровне
+                            if "chatId" in chunk:
+                                chunk["chatId"] = public_chat_id
+                            # isLoadingEnd с вложенным chatId
+                            if "isLoadingEnd" in chunk and isinstance(chunk["isLoadingEnd"], dict):
+                                chunk["isLoadingEnd"]["chatId"] = public_chat_id
+                        
+                        # Отправляем chunk на ВСЕ SSE соединения с этим session_id
+                        if session_id in ChatService._sse_queues:
+                            for connection in ChatService._sse_queues[session_id]:
+                                connection['queue'].put(chunk)
                     
-                    # Отправляем chunk на ВСЕ SSE соединения с этим session_id
+                    print(f"[THREAD] Generation completed. Total chunks: {chunk_count} for message_id={assistant_message_id}")
+                    
+                    # Отправляем done-generation на ВСЕ SSE соединения
+                    done_generation_data = {
+                        "done-generation": {
+                            "messageId": assistant_message_id,
+                            "chatId": public_chat_id
+                        }
+                    }
                     if session_id in ChatService._sse_queues:
                         for connection in ChatService._sse_queues[session_id]:
-                            connection['queue'].put(chunk)
-                
-                # Отправляем done-generation на ВСЕ SSE соединения
-                done_generation_data = {
-                    "done-generation": {
-                        "messageId": assistant_message_id,
-                        "chatId": public_chat_id
-                    }
-                }
-                if session_id in ChatService._sse_queues:
-                    for connection in ChatService._sse_queues[session_id]:
-                        connection['queue'].put(done_generation_data)
+                            connection['queue'].put(done_generation_data)
+                except Exception as e:
+                    import traceback
+                    print(f"[THREAD ERROR] Exception in generate_response for message_id={assistant_message_id}: {e}")
+                    traceback.print_exc()
             
             thread = threading.Thread(target=generate_response)
             thread.daemon = True
@@ -474,15 +489,27 @@ class ChatHistoryView(views.APIView):
                 # Авторизованный пользователь
                 chat_session = ChatSession.objects.get(id=db_chat_id, user=user)
             else:
-                # Неавторизованный пользователь
-                from apps.anonymousUsageLimits.service import AnonymousUsageLimitService
-                
+                # Неавторизованный пользователь - проверяем по fingerprint
                 fingerprint_hash = request.META.get("HTTP_X_FINGERPRINT_HASH")
-                ip_address = self.get_client_ip(request)
-                anonymous_user = AnonymousUsageLimitService.get_or_create_anonymous_usage_limit(
-                    ip_address, fingerprint_hash
-                )
-                chat_session = ChatSession.objects.get(id=db_chat_id, anonymous_user=anonymous_user)
+                if not fingerprint_hash:
+                    return Response(
+                        {"error": "X-Fingerprint-Hash header is required"},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                
+                # Ищем чат по ID
+                chat_session = ChatSession.objects.select_related('anonymous_user').get(id=db_chat_id)
+                
+                # Проверяем что он принадлежит анонимному пользователю с тем же fingerprint
+                if not chat_session.anonymous_user:
+                    return Response(
+                        {"error": "Chat session not found"}, status=status.HTTP_404_NOT_FOUND
+                    )
+                
+                if chat_session.anonymous_user.fingerprint != fingerprint_hash:
+                    return Response(
+                        {"error": "Chat session not found"}, status=status.HTTP_404_NOT_FOUND
+                    )
         except ChatSession.DoesNotExist:
             return Response(
                 {"error": "Chat session not found"}, status=status.HTTP_404_NOT_FOUND
@@ -556,9 +583,7 @@ class ChatRegenerateView(views.APIView):
                 # Авторизованный пользователь
                 chat_session = ChatSession.objects.get(id=deobfuscated_id, user=user)
             else:
-                # Неавторизованный пользователь
-                from apps.anonymousUsageLimits.service import AnonymousUsageLimitService
-                
+                # Неавторизованный пользователь - проверяем по fingerprint
                 fingerprint_hash = request.META.get("HTTP_X_FINGERPRINT_HASH")
                 if not fingerprint_hash:
                     return Response(
@@ -566,11 +591,12 @@ class ChatRegenerateView(views.APIView):
                         status=status.HTTP_403_FORBIDDEN
                     )
                 
-                ip_address = self.get_client_ip(request)
-                anonymous_user = AnonymousUsageLimitService.get_or_create_anonymous_usage_limit(
-                    ip_address, fingerprint_hash
-                )
-                chat_session = ChatSession.objects.get(id=deobfuscated_id, anonymous_user=anonymous_user)
+                # Ищем чат по ID
+                chat_session = ChatSession.objects.get(id=deobfuscated_id)
+                
+                # Проверяем что он принадлежит анонимному пользователю с тем же fingerprint
+                if not chat_session.anonymous_user or chat_session.anonymous_user.fingerprint != fingerprint_hash:
+                    return Response({"error": "Chat session not found"}, status=status.HTTP_404_NOT_FOUND)
         except ChatSession.DoesNotExist:
             return Response({"error": "Chat session not found"}, status=status.HTTP_404_NOT_FOUND)
 
