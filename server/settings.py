@@ -485,3 +485,9 @@ SOCIAL_AUTH_PIPELINE = (
 # Streaming settings
 STREAMING_CHUNK_SIZE = int(os.environ.get("STREAMING_CHUNK_SIZE", "4"))  # символов на чанк
 STREAMING_CHUNK_DELAY = float(os.environ.get("STREAMING_CHUNK_DELAY", "0"))  # секунд между чанками
+
+# Usage limits settings
+ANONYMOUS_DAILY_LIMIT = int(os.environ.get("ANONYMOUS_DAILY_LIMIT", "10"))  # Лимит для анонимных пользователей
+FREE_USER_DAILY_LIMIT = int(os.environ.get("FREE_USER_DAILY_LIMIT", "10"))  # Лимит для бесплатных пользователей
+PAID_USER_DAILY_LIMIT = int(os.environ.get("PAID_USER_DAILY_LIMIT", "1000"))  # Лимит для платных пользователей
+CHAT_HISTORY_LIMIT = int(os.environ.get("CHAT_HISTORY_LIMIT", "100"))  # Количество сообщений в истории

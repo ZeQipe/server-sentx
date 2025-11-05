@@ -251,7 +251,8 @@ class ChatService:
             return
 
         # Get chat history for context
-        history = ChatService.get_chat_history(chat_session, limit=100)
+        from django.conf import settings
+        history = ChatService.get_chat_history(chat_session, limit=settings.CHAT_HISTORY_LIMIT)
         messages = [{"role": msg.role, "content": msg.content} for msg in history]
 
         # Get LLM client and get full response

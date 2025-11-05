@@ -11,7 +11,15 @@ class UsageLimitService:
     @staticmethod
     def get_or_create_usage_limit(user) -> UsageLimit:
         """Get or create usage limit for a user"""
-        limit, _ = UsageLimit.objects.get_or_create(user=user)
+        from django.conf import settings
+        
+        limit, created = UsageLimit.objects.get_or_create(
+            user=user,
+            defaults={
+                'free_requests_limit': settings.FREE_USER_DAILY_LIMIT,
+                'paid_requests_limit': settings.PAID_USER_DAILY_LIMIT,
+            }
+        )
 
         today = date.today()
 

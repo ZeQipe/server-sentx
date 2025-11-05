@@ -69,8 +69,10 @@ class AnonymousUsageLimitService:
     @staticmethod
     def check_anonymous_request_limit(ip_address) -> dict[str, Any]:
         """Check if anonymous user (by IP) has reached their request limit"""
+        from django.conf import settings
+        
         limit = AnonymousUsageLimitService.get_or_create_anonymous_usage_limit(ip_address)
-        daily_limit = 10
+        daily_limit = settings.ANONYMOUS_DAILY_LIMIT
         requests_left = daily_limit - limit.requests_made_today
         can_make_request = limit.requests_made_today < daily_limit
         return {
