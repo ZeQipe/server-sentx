@@ -695,7 +695,7 @@ class ChatRegenerateView(views.APIView):
 
 class ChatRenameView(views.APIView):
     """
-    POST /chat/rename
+    PUT /chat/rename
     Переименовать чат
     """
     
@@ -710,7 +710,7 @@ class ChatRenameView(views.APIView):
             ip = request.META.get("REMOTE_ADDR")
         return ip
     
-    def post(self, request):
+    def put(self, request):
         """
         Переименовать чат
         
