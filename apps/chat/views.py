@@ -473,10 +473,10 @@ class ChatHistoryView(views.APIView):
             - messages: List of messages
         """
         chat_id = request.query_params.get("chatId")
-        if not chat_id:
-            return Response(
-                {"error": "chatId is required"}, status=status.HTTP_400_BAD_REQUEST
-            )
+        
+        # Если chatId не передан или null/undefined - возвращаем пустой список
+        if not chat_id or chat_id == "null" or chat_id == "undefined":
+            return Response({"chatId": None, "messages": []}, status=status.HTTP_200_OK)
 
         user = request.user if request.user.is_authenticated else None
         public_chat_id = chat_id
