@@ -313,8 +313,10 @@ class ChatService:
                 }
             }
             
-            # Дробим на чанки по 4 символа и отправляем
-            chunk_size = 4
+            # Дробим на чанки и отправляем (размер чанка из settings)
+            from django.conf import settings
+            chunk_size = settings.STREAMING_CHUNK_SIZE
+            chunk_delay = settings.STREAMING_CHUNK_DELAY
             accumulated_content = ""
             
             for i in range(0, len(full_content), chunk_size):
@@ -330,6 +332,11 @@ class ChatService:
                         "content": accumulated_content,
                         "resolveMessage": False,
                     }
+                    
+                    # Задержка между чанками (если указана)
+                    if chunk_delay > 0:
+                        import time
+                        time.sleep(chunk_delay)
                 except GeneratorExit:
                     # SSE оборвалось
                     pass

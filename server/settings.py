@@ -481,3 +481,7 @@ SOCIAL_AUTH_PIPELINE = (
     "social_core.pipeline.social_auth.load_extra_data",
     "social_core.pipeline.user.user_details",
 )
+
+# Streaming settings
+STREAMING_CHUNK_SIZE = int(os.environ.get("STREAMING_CHUNK_SIZE", "4"))  # символов на чанк
+STREAMING_CHUNK_DELAY = float(os.environ.get("STREAMING_CHUNK_DELAY", "0"))  # секунд между чанками
