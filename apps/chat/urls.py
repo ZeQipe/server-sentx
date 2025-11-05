@@ -1,7 +1,7 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from .views import ChatHistoryView, ChatMessagesView, ChatStreamView, ChatRegenerateView, ChatPongView
+from .views import ChatHistoryView, ChatMessagesView, ChatStreamView, ChatRegenerateView, ChatPongView, ChatRenameView
 from .viewsets import ChatSessionViewSet, MessageViewSet
 from .persistent_views import PersistentChatStreamView, PersistentChatMessagesView
 
@@ -18,6 +18,7 @@ urlpatterns = [
     path("stream/", ChatStreamView.as_view(), name="chat-stream"),
     path("pong/", ChatPongView.as_view(), name="chat-pong"),
     path("history/", ChatHistoryView.as_view(), name="chat-history"),
+    path("rename/", ChatRenameView.as_view(), name="chat-rename"),
     
     # Persistent SSE connection endpoints
     path("persistent-stream", PersistentChatStreamView.as_view(), name="chat-persistent-stream"),

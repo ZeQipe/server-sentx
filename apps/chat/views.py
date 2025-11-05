@@ -691,3 +691,111 @@ class ChatRegenerateView(views.APIView):
         response["Cache-Control"] = "no-cache"
         response["X-Accel-Buffering"] = "no"
         return response
+
+
+class ChatRenameView(views.APIView):
+    """
+    POST /chat/rename
+    Переименовать чат
+    """
+    
+    permission_classes = [AllowAny]
+    
+    def get_client_ip(self, request):
+        """Get client IP address"""
+        x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(",")[0]
+        else:
+            ip = request.META.get("REMOTE_ADDR")
+        return ip
+    
+    def post(self, request):
+        """
+        Переименовать чат
+        
+        Request body:
+            - chatId (required): Обфусцированный ID чата
+            - title (required): Новое название чата
+        
+        Returns:
+            - chatId: ID чата
+            - title: Новое название
+        """
+        chat_id = request.data.get("chatId")
+        title = request.data.get("title")
+        
+        if not chat_id:
+            return Response(
+                {"error": "chatId is required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not title:
+            return Response(
+                {"error": "title is required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Деобфусцируем chatId
+        try:
+            db_chat_id = Abfuscator.decode(salt=settings.ABFUSCATOR_ID_KEY, value=chat_id)
+        except (ValueError, Exception):
+            return Response(
+                {"error": "Invalid chatId format"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        user = request.user if request.user.is_authenticated else None
+        
+        # Проверяем ownership чата
+        try:
+            if user:
+                # Авторизованный пользователь
+                chat_session = ChatSession.objects.get(id=db_chat_id, user=user)
+            else:
+                # Неавторизованный пользователь - проверяем по fingerprint
+                fingerprint_hash = request.META.get("HTTP_X_FINGERPRINT_HASH")
+                if not fingerprint_hash:
+                    return Response(
+                        {"error": "X-Fingerprint-Hash header is required"},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                
+                # Ищем чат по ID
+                chat_session = ChatSession.objects.select_related('anonymous_user').get(id=db_chat_id)
+                
+                # Проверяем что он принадлежит анонимному пользователю с тем же fingerprint
+                if not chat_session.anonymous_user:
+                    return Response(
+                        {"error": "Chat session not found"}, 
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                
+                if chat_session.anonymous_user.fingerprint != fingerprint_hash:
+                    return Response(
+                        {"error": "Chat session not found"}, 
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+        except ChatSession.DoesNotExist:
+            return Response(
+                {"error": "Chat session not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Обновляем title
+        # Обрезаем до 255 символов если слишком длинный
+        if len(title) > 255:
+            title = title[:252] + "..."
+        
+        chat_session.title = title
+        chat_session.save(update_fields=['title'])
+        
+        # Возвращаем обновленные данные
+        return Response(
+            {
+                "chatId": chat_id,
+                "title": chat_session.title
+            },
+            status=status.HTTP_200_OK
+        )
