@@ -1,25 +1,25 @@
 version: "3.8"
 
 services:
-  db:
+  db_new:
     image: postgres:15-alpine
-    container_name: sentx_docker_db
+    container_name: sentx_new_db
     environment:
-      - POSTGRES_DB=${POSTGRES_DB:-sentx_docker}
-      - POSTGRES_USER=${POSTGRES_USER:-sentx_docker_user}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-sentx_docker_pass_2024}
+      - POSTGRES_DB=${POSTGRES_DB:-sentx_new}
+      - POSTGRES_USER=${POSTGRES_USER:-sentx_new_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-sentx_new_pass_2024}
     ports:
       - "${DB_PORT:-5433}:5432"
     volumes:
-      - db_data_docker:/var/lib/postgresql/data
+      - db_data_new:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sentx_docker_user} -d ${POSTGRES_DB:-sentx_docker}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sentx_new_user} -d ${POSTGRES_DB:-sentx_new}"]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
 
 volumes:
-  db_data_docker:
+  db_data_new:
 
 
