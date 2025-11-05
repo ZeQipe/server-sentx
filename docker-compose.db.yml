@@ -1,9 +1,9 @@
 version: "3.8"
 
 services:
-  db_new:
+  newdb:
     image: postgres:15-alpine
-    container_name: sentx_new_db
+    container_name: sentx_newdb_container
     environment:
       - POSTGRES_DB=${POSTGRES_DB:-sentx_new}
       - POSTGRES_USER=${POSTGRES_USER:-sentx_new_user}
@@ -11,7 +11,9 @@ services:
     ports:
       - "${DB_PORT:-5433}:5432"
     volumes:
-      - db_data_new:/var/lib/postgresql/data
+      - sentx_newdb_volume:/var/lib/postgresql/data
+    networks:
+      - sentx_newdb_network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sentx_new_user} -d ${POSTGRES_DB:-sentx_new}"]
       interval: 10s
@@ -20,6 +22,9 @@ services:
     restart: unless-stopped
 
 volumes:
-  db_data_new:
+  sentx_newdb_volume:
+
+networks:
+  sentx_newdb_network:
 
 
