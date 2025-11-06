@@ -100,7 +100,8 @@ class ChatSessionViewSet(ObfuscatedLookupMixin, viewsets.ModelViewSet):
 
             result.append({
                 "chatId": obfuscated_id,
-                "title": session.title
+                "title": session.title,
+                "createdAt": session.created_at.isoformat()
             })
 
         return Response(result)
