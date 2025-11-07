@@ -28,14 +28,12 @@ services:
     image: postgres:15
     volumes:
       - postgres_data:/var/lib/postgresql/data/
-    environment:
-      POSTGRES_DB: sentx_db
-      POSTGRES_USER: ${POSTGRES_USER:-sentx}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sentx123}
+    env_file:
+      - .env
     networks:
       - sentx
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sentx}"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -44,11 +42,9 @@ services:
     build: .
     command: >
       bash -c "python manage.py migrate &&
-               gunicorn server.wsgi:application --bind 0.0.0.0:8000 --workers 4 --timeout 120"
+               python manage.py runserver 0.0.0.0:8000"
     volumes:
       - .:/app
-      - static_volume:/app/staticfiles
-      - media_volume:/app/media
     env_file:
       - .env
     networks:
@@ -65,8 +61,7 @@ services:
 
 volumes:
   postgres_data:
-  static_volume:
-  media_volume:
+
 
 networks:
    sentx:
