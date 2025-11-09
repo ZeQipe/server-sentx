@@ -2,6 +2,7 @@ import json
 import uuid
 from datetime import datetime
 from django.conf import settings
+from django.utils import timezone
 
 from django.http import StreamingHttpResponse
 from rest_framework import status, views
@@ -789,7 +790,9 @@ class ChatRenameView(views.APIView):
             title = title[:252] + "..."
         
         chat_session.title = title
-        chat_session.save(update_fields=['title'])
+        chat_session.created_at = timezone.now()
+        chat_session.updated_at = timezone.now()
+        chat_session.save(update_fields=['title', 'created_at', 'updated_at'])
         
         # Возвращаем обновленные данные
         return Response(
