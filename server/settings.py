@@ -276,8 +276,8 @@ MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 
 SIMPLE_JWT = {
     # Token lifetimes
-    "ACCESS_TOKEN_LIFETIME": timedelta(hours=1),  # 1 час - короткий access token
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=30),  # 30 дней - длинный refresh token
+    "ACCESS_TOKEN_LIFETIME": timedelta(days=90),  # 3 месяца - access token
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=180),  # 6 месяцев - refresh token
     
     # Token rotation and blacklisting
     "ROTATE_REFRESH_TOKENS": True,  # Ротация refresh токенов при обновлении
