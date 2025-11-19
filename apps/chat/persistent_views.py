@@ -259,6 +259,7 @@ class PersistentChatMessagesView(views.APIView):
             "chatId": public_chat_id,
             "role": "user",
             "content": content,
+            "v": "1",
             "isTemporary": False
         })
         

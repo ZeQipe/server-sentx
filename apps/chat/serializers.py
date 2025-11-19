@@ -30,7 +30,7 @@ class ChatMessageSerializer(serializers.Serializer):
     chatId = serializers.CharField()
     role = serializers.ChoiceField(choices=["user", "assistant"])
     content = serializers.CharField()
-    v = serializers.IntegerField()
+    v = serializers.CharField()
     createdAt = serializers.DateTimeField()
 
 

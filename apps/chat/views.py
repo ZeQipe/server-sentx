@@ -524,7 +524,7 @@ class ChatHistoryView(views.APIView):
                 "chatId": public_chat_id,
                 "role": msg.role,
                 "content": msg.content,
-                "v": msg.version,
+                "v": str(msg.version),
                 "createdAt": msg.created_at.isoformat(),
             }
             for msg in history
@@ -608,9 +608,10 @@ class RegenerationView(views.APIView):
             created_at__gt=target_message.created_at,
         ).delete()
 
-        # Increment version
+        # Increment version and save immediately to avoid race conditions
         new_version = target_message.version + 1
         target_message.version = new_version
+        target_message.save(update_fields=['version'])
 
         # Get history up to target message (exclusive)
         history = Message.objects.filter(
@@ -662,9 +663,11 @@ class RegenerationView(views.APIView):
                 if not full_content:
                     return
                 
-                # Update message in DB with new content and version
-                target_message.content = full_content
-                target_message.save(update_fields=['content', 'version'])
+                # Update message in DB with new content (version already saved)
+                # Get fresh object from DB in this thread
+                msg_to_update = Message.objects.get(uid=message_id)
+                msg_to_update.content = full_content
+                msg_to_update.save(update_fields=['content'])
                 
                 print(f"[REGENERATION] Updated message {message_id} to version {new_version}")
                 
