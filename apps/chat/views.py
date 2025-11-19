@@ -155,7 +155,8 @@ class ChatMessagesView(views.APIView):
                 "messageId": user_message_id,
                 "chatId": public_chat_id,
                 "role": "user",
-                "content": content
+                "content": content,
+                "v": "1"
             }
             for connection in connections:
                 connection['queue'].put(user_msg_data)
@@ -523,6 +524,7 @@ class ChatHistoryView(views.APIView):
                 "chatId": public_chat_id,
                 "role": msg.role,
                 "content": msg.content,
+                "v": msg.version,
                 "createdAt": msg.created_at.isoformat(),
             }
             for msg in history
@@ -541,11 +543,11 @@ class ChatHistoryView(views.APIView):
         return ip
 
 
-class ChatRegenerateView(views.APIView):
+class RegenerationView(views.APIView):
     """
-    POST /chat/messages/regenerate
-    Пересоздать ответ ассистента, начиная с выбранного сообщения, по логике старого сервера.
-    Ожидает поля: chat_session_id (обфусцированный), message_id (uid сообщения ассистента)
+    POST /api/regeneration
+    Регенерировать сообщение ассистента с инкрементом версии.
+    Ожидает поля: messageId (uid сообщения ассистента), sessionId (для SSE)
     """
 
     permission_classes = [AllowAny]
@@ -560,138 +562,206 @@ class ChatRegenerateView(views.APIView):
         return ip
 
     def post(self, request):
-        chat_session_id = request.data.get("chat_session_id")
-        message_id = request.data.get("message_id")
+        message_id = request.data.get("messageId")
+        session_id = request.data.get("sessionId")
 
-        if not chat_session_id:
-            return Response({"error": "chat_session_id is required"}, status=status.HTTP_400_BAD_REQUEST)
         if not message_id:
-            return Response({"error": "message_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "messageId is required"}, status=status.HTTP_400_BAD_REQUEST)
+        if not session_id:
+            return Response({"error": "sessionId is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Deobfuscate chat_session_id
-        try:
-            if isinstance(chat_session_id, str) and not chat_session_id.isdigit():
-                deobfuscated_id = Abfuscator.decode(salt=settings.ABFUSCATOR_ID_KEY, value=chat_session_id)
-            else:
-                deobfuscated_id = int(chat_session_id)
-        except (ValueError, Exception):
-            return Response({"error": "Invalid chat_session_id format"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Verify chat session ownership
-        user = request.user
-        try:
-            if user and user.is_authenticated:
-                # Авторизованный пользователь
-                chat_session = ChatSession.objects.get(id=deobfuscated_id, user=user)
-            else:
-                # Неавторизованный пользователь - проверяем по fingerprint
-                fingerprint_hash = request.META.get("HTTP_X_FINGERPRINT_HASH")
-                if not fingerprint_hash:
-                    return Response(
-                        {"error": "X-Fingerprint-Hash header is required for anonymous users"},
-                        status=status.HTTP_403_FORBIDDEN
-                    )
-                
-                # Ищем чат по ID
-                chat_session = ChatSession.objects.get(id=deobfuscated_id)
-                
-                # Проверяем что он принадлежит анонимному пользователю с тем же fingerprint
-                if not chat_session.anonymous_user or chat_session.anonymous_user.fingerprint != fingerprint_hash:
-                    return Response({"error": "Chat session not found"}, status=status.HTTP_404_NOT_FOUND)
-        except ChatSession.DoesNotExist:
-            return Response({"error": "Chat session not found"}, status=status.HTTP_404_NOT_FOUND)
+        # Verify user
+        user = request.user if request.user.is_authenticated else None
+        ip_address = self.get_client_ip(request)
 
         # Find target message
         try:
-            target_message = Message.objects.get(uid=message_id, chat_session=chat_session)
+            target_message = Message.objects.select_related('chat_session').get(uid=message_id)
         except Message.DoesNotExist:
-            return Response({"error": "Message not found in this chat session"}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "Message not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        chat_session = target_message.chat_session
+
+        # Verify ownership
+        if user:
+            if chat_session.user != user:
+                return Response({"error": "Access denied"}, status=status.HTTP_403_FORBIDDEN)
+        else:
+            # Неавторизованный пользователь
+            fingerprint_hash = request.META.get("HTTP_X_FINGERPRINT_HASH")
+            if not fingerprint_hash:
+                return Response(
+                    {"error": "X-Fingerprint-Hash header is required"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            if not chat_session.anonymous_user or chat_session.anonymous_user.fingerprint != fingerprint_hash:
+                return Response({"error": "Access denied"}, status=status.HTTP_403_FORBIDDEN)
 
         # Only assistant messages can be regenerated
-        if target_message.role == "user":
-            return Response({"error": "Can only regenerate from assistant messages"}, status=status.HTTP_400_BAD_REQUEST)
+        if target_message.role != "assistant":
+            return Response({"error": "Can only regenerate assistant messages"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Build history up to target message (exclusive)
+        # Delete all messages after target message (не включая сам target_message)
+        Message.objects.filter(
+            chat_session=chat_session,
+            created_at__gt=target_message.created_at,
+        ).delete()
+
+        # Increment version
+        new_version = target_message.version + 1
+        target_message.version = new_version
+
+        # Get history up to target message (exclusive)
         history = Message.objects.filter(
             chat_session=chat_session,
             created_at__lt=target_message.created_at,
         ).order_by("created_at")
 
-        # Delete all messages after target message and the target itself
-        Message.objects.filter(
-            chat_session=chat_session,
-            created_at__gt=target_message.created_at,
-        ).order_by("created_at").all().delete()
-        target_message.delete()
-
         # Prepare messages for LLM
         api_messages = [{"role": msg.role, "content": msg.content} for msg in history]
 
-        # SSE stream
-        def event_stream():
-            client = ChatService.get_llm_client()
-            assistant_message_id = str(uuid.uuid4())
-            public_chat_id = Abfuscator.encode(salt=settings.ABFUSCATOR_ID_KEY, value=chat_session.id, min_length=17)
-            full_content = ""
-            first_chunk_sent = False  # Флаг для отслеживания первого чанка
-            
-            # Отправляем isLoadingStart
-            yield f"data: {json.dumps({'isLoadingStart': {'chatId': public_chat_id}})}\n\n"
-
+        # Start streaming with new version through ChatService
+        # We'll use threading like in ChatMessagesView
+        import threading
+        
+        def generate_response():
             try:
-                stream = client.chat(api_messages, stream=True)
-                for chunk in stream:
-                    # Check for errors
-                    if isinstance(chunk, dict) and "error" in chunk:
-                        yield f"data: {json.dumps({'error': chunk['error'], 'messageId': assistant_message_id, 'chatId': public_chat_id})}\n\n"
-                        return
-
-                    # Extract content from chunk
-                    choices = chunk.get("choices", []) if isinstance(chunk, dict) else []
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta", {})
-                    content_part = delta.get("content")
-                    if content_part:
-                        # Перед первым чанком отправляем isLoadingEnd
-                        if not first_chunk_sent:
-                            yield f"data: {json.dumps({'isLoadingEnd': {'chatId': public_chat_id}})}\n\n"
-                            first_chunk_sent = True
-                        
-                        full_content += content_part
-                        data = {
-                            "messageId": assistant_message_id,
+                print(f"[REGENERATION] Starting regeneration for message_id={message_id}, new_version={new_version}")
+                
+                # Get LLM client and get full response
+                client = ChatService.get_llm_client()
+                from service.llm.async_loop import run_async
+                response = run_async(client.chat(api_messages, stream=False))
+                
+                if "error" in response:
+                    llm_error = response["error"]
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"LLM Error during regeneration: {llm_error}, messageId: {message_id}")
+                    
+                    # Send error to SSE
+                    if session_id in ChatService._sse_queues:
+                        error_data = {
+                            "error": llm_error,
+                            "messageId": message_id,
+                            "chatId": Abfuscator.encode(salt=settings.ABFUSCATOR_ID_KEY, value=chat_session.id, min_length=17),
+                        }
+                        for connection in ChatService._sse_queues[session_id]:
+                            connection['queue'].put(error_data)
+                    return
+                
+                # Extract response content
+                choices = response.get("choices", [])
+                if not choices:
+                    return
+                
+                message_obj = choices[0].get("message", {})
+                full_content = message_obj.get("content", "")
+                
+                if not full_content:
+                    return
+                
+                # Update message in DB with new content and version
+                target_message.content = full_content
+                target_message.save(update_fields=['content', 'version'])
+                
+                print(f"[REGENERATION] Updated message {message_id} to version {new_version}")
+                
+                # Send isLoadingEnd
+                public_chat_id = Abfuscator.encode(salt=settings.ABFUSCATOR_ID_KEY, value=chat_session.id, min_length=17)
+                if session_id in ChatService._sse_queues:
+                    loading_end_data = {
+                        "isLoadingEnd": {
+                            "chatId": public_chat_id
+                        }
+                    }
+                    for connection in ChatService._sse_queues[session_id]:
+                        connection['queue'].put(loading_end_data)
+                
+                # Stream chunks with new version
+                chunk_size = settings.STREAMING_CHUNK_SIZE
+                chunk_delay = settings.STREAMING_CHUNK_DELAY
+                accumulated_content = ""
+                
+                for i in range(0, len(full_content), chunk_size):
+                    chunk_text = full_content[i:i + chunk_size]
+                    accumulated_content += chunk_text
+                    
+                    if session_id in ChatService._sse_queues:
+                        chunk_data = {
+                            "messageId": message_id,
                             "chatId": public_chat_id,
                             "role": "assistant",
-                            "content": full_content,
+                            "content": accumulated_content,
+                            "v": str(new_version),
                             "resolveMessage": False,
                         }
-                        yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-                # Save assistant message
-                ChatService.add_message(chat_session, "assistant", full_content, uuid.UUID(assistant_message_id))
-
-                # Final message with resolveMessage flag (no limit increment here to match old logic)
-                final = {
-                    "messageId": assistant_message_id,
-                    "chatId": public_chat_id,
-                    "role": "assistant",
-                    "content": full_content,
-                    "resolveMessage": ChatService.should_show_resolve_message(request.user),
-                }
-                yield f"data: {json.dumps(final, ensure_ascii=False)}\n\n"
-
+                        for connection in ChatService._sse_queues[session_id]:
+                            connection['queue'].put(chunk_data)
+                    
+                    if chunk_delay > 0:
+                        import time
+                        time.sleep(chunk_delay)
+                
+                # Send final message with resolveMessage
+                if session_id in ChatService._sse_queues:
+                    final_data = {
+                        "messageId": message_id,
+                        "chatId": public_chat_id,
+                        "role": "assistant",
+                        "content": full_content,
+                        "v": str(new_version),
+                        "resolveMessage": ChatService.should_show_resolve_message(user),
+                    }
+                    for connection in ChatService._sse_queues[session_id]:
+                        connection['queue'].put(final_data)
+                
+                # Send done-generation
+                if session_id in ChatService._sse_queues:
+                    done_data = {
+                        "done-generation": {
+                            "messageId": message_id,
+                            "chatId": public_chat_id
+                        }
+                    }
+                    for connection in ChatService._sse_queues[session_id]:
+                        connection['queue'].put(done_data)
+                
+                print(f"[REGENERATION] Completed regeneration for message_id={message_id}")
+                
             except Exception as e:
                 import traceback
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error during regeneration: {str(e)}, messageId: {message_id}")
                 traceback.print_exc()
-                yield f"data: {json.dumps({'error': f'Error processing request: {str(e)}', 'messageId': assistant_message_id, 'chatId': public_chat_id})}\n\n"
-            
-            # Не отправляем [DONE] - клиент понимает по messageId когда стрим завершен
-
-        response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
-        response["Cache-Control"] = "no-cache"
-        response["X-Accel-Buffering"] = "no"
-        return response
+        
+        # Send isLoadingStart immediately
+        if session_id and hasattr(ChatService, '_sse_queues') and session_id in ChatService._sse_queues:
+            public_chat_id = Abfuscator.encode(salt=settings.ABFUSCATOR_ID_KEY, value=chat_session.id, min_length=17)
+            loading_start_data = {
+                "isLoadingStart": {
+                    "chatId": public_chat_id
+                }
+            }
+            for connection in ChatService._sse_queues[session_id]:
+                connection['queue'].put(loading_start_data)
+        
+        # Start generation in separate thread
+        thread = threading.Thread(target=generate_response)
+        thread.daemon = True
+        thread.start()
+        
+        return Response(
+            {
+                "success": True,
+                "message": "Regeneration started",
+                "messageId": message_id,
+                "newVersion": new_version
+            },
+            status=status.HTTP_200_OK
+        )
 
 
 class ChatRenameView(views.APIView):
@@ -799,6 +869,73 @@ class ChatRenameView(views.APIView):
             {
                 "chatId": chat_id,
                 "title": chat_session.title
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+class ChatStopStreamingView(views.APIView):
+    """
+    POST /chat/stop-streaming
+    Остановить стриминг сообщения для текущего чата
+    """
+    
+    permission_classes = [AllowAny]
+    
+    def post(self, request):
+        """
+        Остановить стриминг сообщения
+        
+        Request body:
+            - sessionId (required): ID SSE сессии
+            - chatId (required): Обфусцированный ID чата
+        
+        Returns:
+            - success: True если стриминг остановлен
+            - message: Сообщение о результате
+        """
+        session_id = request.data.get("sessionId")
+        chat_id = request.data.get("chatId")
+        
+        if not session_id:
+            return Response(
+                {"error": "sessionId is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not chat_id:
+            return Response(
+                {"error": "chatId is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Деобфусцируем chatId
+        try:
+            db_chat_id = Abfuscator.decode(salt=settings.ABFUSCATOR_ID_KEY, value=chat_id)
+        except (ValueError, Exception):
+            return Response(
+                {"error": "Invalid chatId format"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Проверяем что стриминг активен для этого чата
+        if db_chat_id not in ChatService._streaming_control:
+            return Response(
+                {
+                    "success": False,
+                    "message": "No active streaming found for this chat"
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Устанавливаем флаг остановки
+        ChatService._streaming_control[db_chat_id]["should_continue"] = False
+        print(f"[STOP-STREAMING] Stopping streaming for chat_id={db_chat_id}, session_id={session_id}")
+        
+        return Response(
+            {
+                "success": True,
+                "message": "Streaming stop requested"
             },
             status=status.HTTP_200_OK
         )

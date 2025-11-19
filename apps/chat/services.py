@@ -21,6 +21,10 @@ User = get_user_model()
 class ChatService:
     """Service for handling chat operations"""
     
+    # Глобальное хранилище для контроля стриминга
+    # Ключ: chat_id (str), Значение: dict с информацией о стриминге
+    _streaming_control = {}
+    
     @staticmethod
     def get_or_create_session_id(
         user: Optional[User],
@@ -129,14 +133,14 @@ class ChatService:
     @staticmethod
     @transaction.atomic
     def add_message(
-        chat_session: ChatSession, role: str, content: str, message_uid: Optional[uuid.UUID] = None
+        chat_session: ChatSession, role: str, content: str, message_uid: Optional[uuid.UUID] = None, version: int = 1
     ) -> Message:
         """Add a message to a chat session"""
         if message_uid is None:
             message_uid = uuid.uuid4()
 
         return Message.objects.create(
-            chat_session=chat_session, role=role, content=content, uid=str(message_uid)
+            chat_session=chat_session, role=role, content=content, uid=str(message_uid), version=version
         )
 
     @staticmethod
@@ -215,6 +219,7 @@ class ChatService:
         ip_address: str,
         is_temporary: bool = False,
         assistant_message_id: Optional[str] = None,
+        version: int = 1,
     ) -> Generator[dict[str, Any], None, None]:
         """
         Process a chat message and stream the response
@@ -261,9 +266,17 @@ class ChatService:
         if not assistant_message_id:
             assistant_message_id = str(uuid.uuid4())
         
+        # Регистрируем стриминг в глобальном хранилище
+        ChatService._streaming_control[chat_id] = {
+            "should_continue": True,
+            "message_id": assistant_message_id,
+            "started_at": datetime.now()
+        }
+        
         full_content = ""
         llm_error = None  # Флаг ошибки от LLM
         generation_completed = False  # Флаг успешной генерации
+        streaming_stopped = False  # Флаг остановки стриминга пользователем
         
         try:
             # Получаем ПОЛНЫЙ ответ сразу (через async httpx в глобальном event loop)
@@ -321,6 +334,14 @@ class ChatService:
             accumulated_content = ""
             
             for i in range(0, len(full_content), chunk_size):
+                # Проверяем флаг остановки стриминга
+                if chat_id in ChatService._streaming_control:
+                    if not ChatService._streaming_control[chat_id]["should_continue"]:
+                        print(f"[SERVICE] Streaming stopped by user for chat_id={chat_id}, message_id={assistant_message_id}")
+                        streaming_stopped = True
+                        full_content = accumulated_content  # Сохраняем только отправленный контент
+                        break
+                
                 chunk_text = full_content[i:i + chunk_size]
                 accumulated_content += chunk_text
                 
@@ -331,6 +352,7 @@ class ChatService:
                         "chatId": chat_id,
                         "role": "assistant",
                         "content": accumulated_content,
+                        "v": str(version),
                         "resolveMessage": False,
                     }
                     
@@ -342,8 +364,21 @@ class ChatService:
                     # SSE оборвалось
                     pass
             
-            # Генерация успешна
-            generation_completed = True
+            # Если стриминг был остановлен пользователем
+            if streaming_stopped:
+                # Отправляем событие stop-streaming
+                try:
+                    yield {
+                        "stop-streaming": {
+                            "chatId": chat_id,
+                            "messageId": assistant_message_id
+                        }
+                    }
+                except:
+                    pass  # SSE может быть закрыто
+            else:
+                # Генерация завершена успешно (не была остановлена)
+                generation_completed = True
 
         except Exception as e:
             # Ошибка на стороне сервера (не LLM)
@@ -364,6 +399,11 @@ class ChatService:
                 pass  # SSE может быть уже закрыто
         
         finally:
+            # Очищаем запись о стриминге из глобального хранилища
+            if chat_id in ChatService._streaming_control:
+                del ChatService._streaming_control[chat_id]
+                print(f"[SERVICE] Streaming control cleaned for chat_id={chat_id}")
+            
             # ВСЕГДА сохраняем ответ, если что-то было сгенерировано
             if full_content:
                 try:
@@ -388,6 +428,7 @@ class ChatService:
                         "chatId": chat_id,
                         "role": "assistant",
                         "content": full_content,
+                        "v": str(version),
                         "resolveMessage": ChatService.should_show_resolve_message(user),
                     }
                 except:

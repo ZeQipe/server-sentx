@@ -28,6 +28,7 @@ from drf_spectacular.views import (
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from apps.admin.urls import admin_api_urlpatterns, admin_llm_urlpatterns
 from apps.admin.views import admin_messages_view
+from apps.chat.views import RegenerationView
 
 urlpatterns = [
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
@@ -55,6 +56,8 @@ urlpatterns = [
     path("api/auth/social/", include("apps.users.urls")),
     path("api/payments/", include("apps.payments.urls")),
     path("api/", include("apps.usageLimits.urls")),
+    # Regeneration endpoint
+    path("api/regeneration/", RegenerationView.as_view(), name="regeneration"),
     # Chat endpoints (swagger.yaml + old server routes)
     path("api/chat/", include("apps.chat.urls")),
     # Favicon redirect
