@@ -150,7 +150,8 @@ class GoogleOneTapView(generics.GenericAPIView):
                 payload = id_token.verify_oauth2_token(
                     token,
                     google_requests.Request(),
-                    settings.ONE_TAP_GOOGLE_CLIENT_ID
+                    settings.ONE_TAP_GOOGLE_CLIENT_ID,
+                    clock_skew_in_seconds=60  # Допустимое отклонение времени 60 секунд
                 )
             except ValueError as e:
                 logger.error(f"Invalid Google token: {str(e)}")
