@@ -198,13 +198,9 @@ class GoogleOneTapView(generics.GenericAPIView):
             
             return response.Response(
                 data={
-                    "access": str(refresh.access_token),
-                    "refresh": str(refresh),
-                    "user": {
-                        "id": user.id,
-                        "email": user.email,
-                        "name": user.name,
-                    }
+                    "access_token": str(refresh.access_token),
+                    "refresh_token": str(refresh),
+                    "user_id": user.id
                 },
                 status=status.HTTP_200_OK,
             )
