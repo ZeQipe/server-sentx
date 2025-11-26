@@ -118,7 +118,9 @@ class GoogleOneTapView(generics.GenericAPIView):
         Verify Google One Tap ID token and return JWT tokens.
         
         Expects:
-            Authorization: Bearer <google_id_token>
+            {
+                "credentials": "<google_id_token>"
+            }
         
         Returns:
             {
@@ -135,22 +137,20 @@ class GoogleOneTapView(generics.GenericAPIView):
         from google.auth.transport import requests as google_requests
         
         try:
-            # 1. Extract token from Authorization header
-            auth_header = request.headers.get('Authorization', '')
-            if not auth_header.startswith('Bearer '):
+            # 1. Extract token from request body
+            token = request.data.get('credentials')
+            if not token:
                 return response.Response(
-                    data={"detail": "Authorization header must start with 'Bearer '"},
-                    status=status.HTTP_401_UNAUTHORIZED,
+                    data={"detail": "credentials field is required"},
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
-            
-            token = auth_header.split(' ')[1]
             
             # 2. Verify Google ID token
             try:
                 payload = id_token.verify_oauth2_token(
                     token,
                     google_requests.Request(),
-                    settings.GOOGLE_CLIENT_ID
+                    settings.ONE_TAP_GOOGLE_CLIENT_ID
                 )
             except ValueError as e:
                 logger.error(f"Invalid Google token: {str(e)}")
