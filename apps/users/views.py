@@ -105,3 +105,112 @@ def get_backend(provider):
     if backend_class:
         return backend_class
     raise ValueError(f"Unknown provider: {provider}")
+
+
+class GoogleOneTapView(generics.GenericAPIView):
+    """Handle Google One Tap authentication and generate JWT tokens."""
+    
+    permission_classes = []  # Allow any - no authentication required
+    authentication_classes = []  # Disable authentication for this endpoint
+
+    def post(self, request):
+        """
+        Verify Google One Tap ID token and return JWT tokens.
+        
+        Expects:
+            Authorization: Bearer <google_id_token>
+        
+        Returns:
+            {
+                "access": "jwt_access_token",
+                "refresh": "jwt_refresh_token",
+                "user": {
+                    "id": user_id,
+                    "email": "user@example.com",
+                    "name": "User Name"
+                }
+            }
+        """
+        from google.oauth2 import id_token
+        from google.auth.transport import requests as google_requests
+        
+        try:
+            # 1. Extract token from Authorization header
+            auth_header = request.headers.get('Authorization', '')
+            if not auth_header.startswith('Bearer '):
+                return response.Response(
+                    data={"detail": "Authorization header must start with 'Bearer '"},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+            
+            token = auth_header.split(' ')[1]
+            
+            # 2. Verify Google ID token
+            try:
+                payload = id_token.verify_oauth2_token(
+                    token,
+                    google_requests.Request(),
+                    settings.GOOGLE_CLIENT_ID
+                )
+            except ValueError as e:
+                logger.error(f"Invalid Google token: {str(e)}")
+                return response.Response(
+                    data={"detail": "Invalid Google token"},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+            
+            # 3. Extract user data from payload
+            google_id = payload.get('sub')
+            email = payload.get('email')
+            given_name = payload.get('given_name', '')
+            family_name = payload.get('family_name', '')
+            picture = payload.get('picture', '')
+            
+            if not google_id or not email:
+                return response.Response(
+                    data={"detail": "Invalid token payload: missing required fields"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            
+            # 4. Check if email is already taken by another user (without google_id)
+            existing_user_with_email = User.objects.filter(email=email).first()
+            if existing_user_with_email and not existing_user_with_email.google_id:
+                return response.Response(
+                    data={"detail": "Этот почтовый ящик уже занят другим аккаунтом"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            
+            # 5. Get or create user by google_id
+            # Данные обновляются ТОЛЬКО при создании (created=True)
+            user, created = User.objects.get_or_create(
+                google_id=google_id,
+                defaults={
+                    'email': email,
+                    'name': given_name if given_name else email.split('@')[0],
+                }
+            )
+            
+            logger.info(f"Google One Tap auth successful for user {user.id} (created={created})")
+            
+            # 6. Generate JWT tokens
+            refresh = RefreshToken.for_user(user)
+            
+            return response.Response(
+                data={
+                    "access": str(refresh.access_token),
+                    "refresh": str(refresh),
+                    "user": {
+                        "id": user.id,
+                        "email": user.email,
+                        "name": user.name,
+                    }
+                },
+                status=status.HTTP_200_OK,
+            )
+            
+        except Exception as e:
+            logger.error(f"Error during Google One Tap auth: {str(e)}", exc_info=True)
+            return response.Response(
+                data={"detail": f"Authentication error: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
