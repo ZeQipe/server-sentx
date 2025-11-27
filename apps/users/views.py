@@ -173,23 +173,31 @@ class GoogleOneTapView(generics.GenericAPIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             
-            # 4. Check if email is already taken by another user (without google_id)
-            existing_user_with_email = User.objects.filter(email=email).first()
-            if existing_user_with_email and not existing_user_with_email.google_id:
-                return response.Response(
-                    data={"detail": "Этот почтовый ящик уже занят другим аккаунтом"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+            # 4. Find or create user - strategy with email fallback
+            # Сначала ищем по google_id (основной идентификатор)
+            user = User.objects.filter(google_id=google_id).first()
+            created = False
             
-            # 5. Get or create user by google_id
-            # Данные обновляются ТОЛЬКО при создании (created=True)
-            user, created = User.objects.get_or_create(
-                google_id=google_id,
-                defaults={
-                    'email': email,
-                    'name': given_name if given_name else email.split('@')[0],
-                }
-            )
+            if user:
+                logger.info(f"Found existing user by google_id: {user.email} (id={user.id})")
+            else:
+                # Если не нашли по google_id, ищем по email
+                user = User.objects.filter(email=email).first()
+                
+                if user:
+                    logger.info(f"Found existing user by email: {user.email} (id={user.id}), updating google_id")
+                    # Обновляем google_id для этого пользователя
+                    user.google_id = google_id
+                    user.save(update_fields=['google_id'])
+                else:
+                    # Пользователя нет - создаем нового
+                    logger.info(f"Creating new user with email: {email}, google_id: {google_id}")
+                    user = User.objects.create(
+                        email=email,
+                        google_id=google_id,
+                        name=given_name if given_name else email.split('@')[0],
+                    )
+                    created = True
             
             logger.info(f"Google One Tap auth successful for user {user.id} (created={created})")
             
