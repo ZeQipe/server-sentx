@@ -6,14 +6,6 @@ services:
     restart: unless-stopped
     networks:
       - sentx
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        touch /letsencrypt/acme.json
-        chmod 600 /letsencrypt/acme.json
-        exec traefik "$$@"
-      - --
     command:
       - "--api.insecure=true"
       - "--providers.docker=true"
