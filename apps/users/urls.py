@@ -8,4 +8,9 @@ urlpatterns = [
         views.SocialAuthCallbackView.as_view(),
         name="social-auth",
     ),
+    path(
+        "google-one-tap/",
+        views.GoogleOneTapView.as_view(),
+        name="google-one-tap",
+    ),
 ]

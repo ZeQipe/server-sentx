@@ -276,8 +276,9 @@ MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 
 SIMPLE_JWT = {
     # Token lifetimes
-    "ACCESS_TOKEN_LIFETIME": timedelta(days=90),  # 3 месяца - access token
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=180),  # 6 месяцев - refresh token
+    "ACCESS_TOKEN_LIFETIME": timedelta(days=180),  # 180 дней - короткий access token
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=180),  # 180 дней - длинный refresh token
+
     
     # Token rotation and blacklisting
     "ROTATE_REFRESH_TOKENS": True,  # Ротация refresh токенов при обновлении
@@ -306,8 +307,8 @@ SIMPLE_JWT = {
     
     # Sliding tokens (not used, but configured for clarity)
     "SLIDING_TOKEN_REFRESH_EXP_CLAIM": "refresh_exp",
-    "SLIDING_TOKEN_LIFETIME": timedelta(minutes=5),
-    "SLIDING_TOKEN_REFRESH_LIFETIME": timedelta(days=1),
+    "SLIDING_TOKEN_LIFETIME": timedelta(days=180),
+    "SLIDING_TOKEN_REFRESH_LIFETIME": timedelta(days=7),
 }
 
 SOCIAL_AUTH_JSONFIELD_ENABLED = True
@@ -322,6 +323,9 @@ AUTHENTICATION_BACKENDS = (
 # Google OAuth2 Settings
 SOCIAL_AUTH_GOOGLE_OAUTH2_KEY = os.environ.get("GOOGLE_OAUTH2_KEY", "")
 SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET = os.environ.get("GOOGLE_OAUTH2_SECRET", "")
+
+# Google One Tap Settings (separate credentials)
+ONE_TAP_GOOGLE_CLIENT_ID = os.environ.get("ONE_TAP_GOOGLE_CLIENT_ID", "")
 SOCIAL_AUTH_GOOGLE_OAUTH2_USE_PKCE = True
 SOCIAL_AUTH_GOOGLE_OAUTH2_SCOPE = [
     "openid",
@@ -476,16 +480,20 @@ SOCIAL_AUTH_PIPELINE = (
     "social_core.pipeline.social_auth.social_uid",
     "social_core.pipeline.social_auth.auth_allowed",
     "social_core.pipeline.social_auth.social_user",
+    # Custom step: Check if user exists by google_id (for One Tap compatibility)
+    "apps.users.pipeline.associate_by_google_id",
     "social_core.pipeline.user.get_username",
     "social_core.pipeline.user.create_user",
     "social_core.pipeline.social_auth.associate_user",
     "social_core.pipeline.social_auth.load_extra_data",
     "social_core.pipeline.user.user_details",
+    # Custom step: Save google_id to User model
+    "apps.users.pipeline.save_google_id",
 )
 
 # Streaming settings
-STREAMING_CHUNK_SIZE = int(os.environ.get("STREAMING_CHUNK_SIZE", "4"))  # символов на чанк
-STREAMING_CHUNK_DELAY = float(os.environ.get("STREAMING_CHUNK_DELAY", "0"))  # секунд между чанками
+STREAMING_CHUNK_SIZE = 15  # символов на чанк
+STREAMING_CHUNK_DELAY = 0.01  # секунд между чанками
 
 # Usage limits settings
 ANONYMOUS_DAILY_LIMIT = int(os.environ.get("ANONYMOUS_DAILY_LIMIT", "10"))  # Лимит для анонимных пользователей
