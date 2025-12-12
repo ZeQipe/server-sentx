@@ -3,6 +3,7 @@ version: '3.8'
 services:
   traefik:
     image: traefik:v2.10
+    restart: unless-stopped
     networks:
       - sentx
     command:
@@ -24,6 +25,8 @@ services:
     volumes:
       - "./letsencrypt:/letsencrypt"
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - web
 
   db:
     image: postgres:15
