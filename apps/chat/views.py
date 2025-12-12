@@ -174,9 +174,9 @@ class ChatMessagesView(views.APIView):
             for connection in connections:
                 connection['queue'].put(start_generation_data)
             
-            # Отправляем isLoadingStart
+            # Отправляем loading-start
             loading_start_data = {
-                "isLoadingStart": {
+                "loading-start": {
                     "chatId": public_chat_id
                 }
             }
@@ -205,9 +205,9 @@ class ChatMessagesView(views.APIView):
                             # Обычные chunk с chatId на верхнем уровне
                             if "chatId" in chunk:
                                 chunk["chatId"] = public_chat_id
-                            # isLoadingEnd с вложенным chatId
-                            if "isLoadingEnd" in chunk and isinstance(chunk["isLoadingEnd"], dict):
-                                chunk["isLoadingEnd"]["chatId"] = public_chat_id
+                            # loading-end с вложенным chatId
+                            if "loading-end" in chunk and isinstance(chunk["loading-end"], dict):
+                                chunk["loading-end"]["chatId"] = public_chat_id
                         
                         # Отправляем chunk на ВСЕ SSE соединения с этим session_id
                         if session_id in ChatService._sse_queues:
@@ -602,6 +602,15 @@ class RegenerationView(views.APIView):
         if target_message.role != "assistant":
             return Response({"error": "Can only regenerate assistant messages"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Остановка активного стриминга, если он идёт
+        db_chat_id = chat_session.id
+        if db_chat_id in ChatService._streaming_control:
+            ChatService._streaming_control[db_chat_id]["should_continue"] = False
+            print(f"[REGENERATION] Stopped active streaming for chat_id={db_chat_id}")
+            # Даём время на корректное завершение стриминга
+            import time
+            time.sleep(0.1)
+
         # Delete all messages after target message (не включая сам target_message)
         Message.objects.filter(
             chat_session=chat_session,
@@ -671,11 +680,11 @@ class RegenerationView(views.APIView):
                 
                 print(f"[REGENERATION] Updated message {message_id} to version {new_version}")
                 
-                # Send isLoadingEnd
+                # Send loading-end
                 public_chat_id = Abfuscator.encode(salt=settings.ABFUSCATOR_ID_KEY, value=chat_session.id, min_length=17)
                 if session_id in ChatService._sse_queues:
                     loading_end_data = {
-                        "isLoadingEnd": {
+                        "loading-end": {
                             "chatId": public_chat_id
                         }
                     }
@@ -740,11 +749,11 @@ class RegenerationView(views.APIView):
                 logger.error(f"Error during regeneration: {str(e)}, messageId: {message_id}")
                 traceback.print_exc()
         
-        # Send isLoadingStart immediately
+        # Send loading-start immediately
         if session_id and hasattr(ChatService, '_sse_queues') and session_id in ChatService._sse_queues:
             public_chat_id = Abfuscator.encode(salt=settings.ABFUSCATOR_ID_KEY, value=chat_session.id, min_length=17)
             loading_start_data = {
-                "isLoadingStart": {
+                "loading-start": {
                     "chatId": public_chat_id
                 }
             }

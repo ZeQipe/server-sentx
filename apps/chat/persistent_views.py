@@ -263,9 +263,9 @@ class PersistentChatMessagesView(views.APIView):
             "isTemporary": False
         })
         
-        # Отправляем isLoadingStart
+        # Отправляем loading-start
         message_queue.put({
-            "isLoadingStart": {
+            "loading-start": {
                 "chatId": public_chat_id
             }
         })
@@ -284,9 +284,9 @@ class PersistentChatMessagesView(views.APIView):
                         # Обычные chunk с chatId на верхнем уровне
                         if "chatId" in chunk:
                             chunk["chatId"] = public_chat_id
-                        # isLoadingEnd с вложенным chatId
-                        if "isLoadingEnd" in chunk and isinstance(chunk["isLoadingEnd"], dict):
-                            chunk["isLoadingEnd"]["chatId"] = public_chat_id
+                        # loading-end с вложенным chatId
+                        if "loading-end" in chunk and isinstance(chunk["loading-end"], dict):
+                            chunk["loading-end"]["chatId"] = public_chat_id
                     message_queue.put(chunk)
                     
             except Exception as e:

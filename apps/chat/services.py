@@ -320,9 +320,9 @@ class ChatService:
                 }
                 return
             
-            # Отправляем isLoadingEnd перед первым чанком
+            # Отправляем loading-end перед первым чанком
             yield {
-                "isLoadingEnd": {
+                "loading-end": {
                     "chatId": chat_id
                 }
             }
