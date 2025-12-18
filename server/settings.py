@@ -347,6 +347,28 @@ SOCIAL_AUTH_TWITTER_OAUTH2_SECRET = os.environ.get("TWITTER_OAUTH2_SECRET", "")
 SOCIAL_AUTH_TWITTER_OAUTH2_PKCE_CODE_CHALLENGE_METHOD = "S256"
 SOCIAL_AUTH_TWITTER_OAUTH2_SCOPE = ["tweet.read", "users.read", "offline.access"]
 
+# Apple OAuth2 Settings
+# Получите эти значения из Apple Developer Console
+# Инструкция: https://developer.apple.com/documentation/sign_in_with_apple
+APPLE_TEAM_ID = os.environ.get("APPLE_TEAM_ID", "")  # Team ID из Membership
+APPLE_CLIENT_ID = os.environ.get("APPLE_CLIENT_ID", "")  # Services ID (com.example.app.service)
+APPLE_KEY_ID = os.environ.get("APPLE_KEY_ID", "")  # Key ID для Sign in with Apple
+APPLE_PRIVATE_KEY = os.environ.get("APPLE_PRIVATE_KEY", "")  # Содержимое .p8 файла
+
+# Apple OAuth2 URLs
+APPLE_REDIRECT_URI = os.environ.get(
+    "APPLE_REDIRECT_URI",
+    "https://api.sentx.ai/api/auth/social/apple/callback/"
+    if not DEBUG
+    else "http://localhost:8000/api/auth/social/apple/callback/"
+)
+APPLE_FRONTEND_CALLBACK_URL = os.environ.get(
+    "APPLE_FRONTEND_CALLBACK_URL",
+    "https://sentx.ai/callback"
+    if not DEBUG
+    else "http://localhost:3000/callback"
+)
+
 # Social Auth URLs
 SOCIAL_AUTH_LOGIN_REDIRECT_URL = os.environ.get(
     "SOCIAL_AUTH_LOGIN_REDIRECT_URL",
