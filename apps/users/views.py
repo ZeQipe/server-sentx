@@ -5,7 +5,9 @@ from urllib.parse import urlencode
 from django.conf import settings
 from django.core.cache import cache
 from django.http import HttpResponseRedirect
+from django.utils.decorators import method_decorator
 from django.utils.module_loading import import_string
+from django.views.decorators.csrf import csrf_exempt
 from rest_framework import generics, response, status
 from rest_framework_simplejwt.tokens import RefreshToken
 from social_core.backends.oauth import BaseOAuth2
@@ -287,12 +289,15 @@ class AppleLoginView(generics.GenericAPIView):
             )
 
 
+@method_decorator(csrf_exempt, name='dispatch')
 class AppleCallbackView(generics.GenericAPIView):
     """
     Обработка callback от Apple после авторизации.
-    Apple отправляет POST запрос с code и state.
+    Apple отправляет POST запрос с code и state (response_mode=form_post).
     
     POST /api/auth/social/apple/callback/
+    
+    ВАЖНО: CSRF отключен, т.к. Apple делает POST запрос напрямую.
     
     После успешной обработки редиректит на frontend с session_id.
     """
@@ -481,9 +486,14 @@ class AppleUserView(generics.GenericAPIView):
             
             logger.info(f"Apple auth successful for user {user.id} (created={created})")
             
-            # Возвращаем данные ТОЧНО как в тестовом примере
+            # Генерируем JWT токены для пользователя
+            refresh = RefreshToken.for_user(user)
+            
+            # Возвращаем данные пользователя + JWT токены
             return response.Response(
                 data={
+                    "access_token": str(refresh.access_token),
+                    "refresh_token": str(refresh),
                     "user_id": apple_user_id,
                     "email": email,
                     "email_verified": email_verified,
