@@ -8,7 +8,8 @@ from django.http import HttpResponseRedirect
 from django.utils.decorators import method_decorator
 from django.utils.module_loading import import_string
 from django.views.decorators.csrf import csrf_exempt
-from rest_framework import generics, response, status
+from rest_framework import response, status
+from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from social_core.backends.oauth import BaseOAuth2
 from social_core.exceptions import AuthCanceled, AuthForbidden, AuthException
@@ -23,7 +24,7 @@ APPLE_STATE_TIMEOUT = 300
 APPLE_SESSION_TIMEOUT = 300
 
 
-class SocialAuthCallbackView(generics.GenericAPIView):
+class SocialAuthCallbackView(APIView):
     """Handle OAuth2 callback from social provider and generate JWT tokens."""
 
     def post(self, request, provider):
@@ -118,7 +119,7 @@ def get_backend(provider):
     raise ValueError(f"Unknown provider: {provider}")
 
 
-class GoogleOneTapView(generics.GenericAPIView):
+class GoogleOneTapView(APIView):
     """Handle Google One Tap authentication and generate JWT tokens."""
     
     permission_classes = []  # Allow any - no authentication required
@@ -236,12 +237,12 @@ class GoogleOneTapView(generics.GenericAPIView):
 # Apple OAuth2 Views
 # ============================================================================
 
-class AppleLoginView(generics.GenericAPIView):
+class AppleLoginView(APIView):
     """
     Инициация Apple OAuth2 flow.
     Возвращает URL для редиректа на страницу авторизации Apple.
     
-    GET /api/auth/social/apple/login/
+    GET /api/auth/custom/apple/login/
     
     Response:
         {
@@ -290,12 +291,12 @@ class AppleLoginView(generics.GenericAPIView):
 
 
 @method_decorator(csrf_exempt, name='dispatch')
-class AppleCallbackView(generics.GenericAPIView):
+class AppleCallbackView(APIView):
     """
     Обработка callback от Apple после авторизации.
     Apple отправляет POST запрос с code и state (response_mode=form_post).
     
-    POST /api/auth/social/apple/callback/
+    POST /api/auth/custom/apple/callback/
     
     ВАЖНО: CSRF отключен, т.к. Apple делает POST запрос напрямую.
     
@@ -395,15 +396,17 @@ class AppleCallbackView(generics.GenericAPIView):
             )
 
 
-class AppleUserView(generics.GenericAPIView):
+class AppleUserView(APIView):
     """
     Получение данных пользователя по session_id.
-    Формат ответа идентичен тестовому примеру.
+    Формат ответа идентичен тестовому примеру + JWT токены.
     
-    GET /api/auth/social/apple/user/?session_id=XXX
+    GET /api/auth/custom/apple/user/?session_id=XXX
     
     Response:
         {
+            "access_token": "eyJ...",
+            "refresh_token": "eyJ...",
             "user_id": "001234.abcdef...",
             "email": "user@example.com",
             "email_verified": true,
