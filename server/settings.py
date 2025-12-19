@@ -358,9 +358,9 @@ APPLE_PRIVATE_KEY = os.environ.get("APPLE_PRIVATE_KEY", "")  # Содержим�
 # Apple OAuth2 URLs
 APPLE_REDIRECT_URI = os.environ.get(
     "APPLE_REDIRECT_URI",
-    "https://api.sentx.ai/api/auth/social/apple/callback/"
+    "https://api.sentx.ai/api/auth/custom/apple/callback/"
     if not DEBUG
-    else "http://localhost:8000/api/auth/social/apple/callback/"
+    else "http://localhost:8000/api/auth/custom/apple/callback/"
 )
 APPLE_FRONTEND_CALLBACK_URL = os.environ.get(
     "APPLE_FRONTEND_CALLBACK_URL",

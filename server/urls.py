@@ -50,10 +50,10 @@ urlpatterns = [
     # Djoser URLs - /api/auth/users/, /api/auth/users/me/, etc.
     path("api/auth/", include("djoser.urls")),
     path("api/auth/jwt/", include("djoser.urls.jwt")),
-    # Social Auth URLs  
+    # Social Django URLs (login/complete для Google, Twitter)
     path("api/auth/social/", include("social_django.urls")),
-    # Custom social auth callback - /api/auth/social/<provider>/callback/
-    path("api/auth/social/", include("apps.users.urls")),
+    # Custom auth endpoints (Apple OAuth2, Google One Tap, custom callbacks)
+    path("api/auth/custom/", include("apps.users.urls")),
     path("api/payments/", include("apps.payments.urls")),
     path("api/", include("apps.usageLimits.urls")),
     # Regeneration endpoint
