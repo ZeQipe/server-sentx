@@ -3,17 +3,7 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    path(
-        "<str:provider>/callback/",
-        views.SocialAuthCallbackView.as_view(),
-        name="social-auth",
-    ),
-    path(
-        "google-one-tap/",
-        views.GoogleOneTapView.as_view(),
-        name="google-one-tap",
-    ),
-    # Apple OAuth2 endpoints
+    # Apple OAuth2 endpoints - ПЕРВЫМИ (более специфичные)
     path(
         "apple/login/",
         views.AppleLoginView.as_view(),
@@ -28,5 +18,17 @@ urlpatterns = [
         "apple/user/",
         views.AppleUserView.as_view(),
         name="apple-user",
+    ),
+    # Google One Tap
+    path(
+        "google-one-tap/",
+        views.GoogleOneTapView.as_view(),
+        name="google-one-tap",
+    ),
+    # Generic social auth callback - ПОСЛЕДНИМ (generic паттерн)
+    path(
+        "<str:provider>/callback/",
+        views.SocialAuthCallbackView.as_view(),
+        name="social-auth",
     ),
 ]
