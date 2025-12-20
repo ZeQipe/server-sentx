@@ -65,11 +65,20 @@ class SocialAuthCallbackView(APIView):
             logger.info(f"User returned: {user}")
             if user:
                 refresh = RefreshToken.for_user(user)
+                # Определяем auth_provider
+                auth_provider = None
+                if user.google_id:
+                    auth_provider = "google"
+                elif user.icloud_id:
+                    auth_provider = "apple"
+                elif user.x_id:
+                    auth_provider = "x"
                 return response.Response(
                     data={
                         "access_token": str(refresh.access_token),
                         "refresh_token": str(refresh),
                         "user_id": user.id,
+                        "auth_provider": auth_provider,
                     },
                     status=status.HTTP_200_OK,
                 )
@@ -220,7 +229,8 @@ class GoogleOneTapView(APIView):
                 data={
                     "access_token": str(refresh.access_token),
                     "refresh_token": str(refresh),
-                    "user_id": user.id
+                    "user_id": user.id,
+                    "auth_provider": "google",
                 },
                 status=status.HTTP_200_OK,
             )
@@ -501,6 +511,7 @@ class AppleUserView(APIView):
                     "email": email,
                     "email_verified": email_verified,
                     "is_private_email": is_private_email,
+                    "auth_provider": "apple",
                 },
                 status=status.HTTP_200_OK,
             )

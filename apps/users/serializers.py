@@ -49,6 +49,7 @@ class UserSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(
         required=False, validators=[UniqueValidator(queryset=User.objects.all())]
     )
+    auth_provider = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -63,6 +64,7 @@ class UserSerializer(serializers.ModelSerializer):
             "google_id",
             "icloud_id",
             "x_id",
+            "auth_provider",
         ]
         read_only_fields = [
             "id",
@@ -73,8 +75,22 @@ class UserSerializer(serializers.ModelSerializer):
             "x_id",
             "is_unlimited",
             "is_active",
+            "auth_provider",
         ]
         ref_name = "SentxUser"
+
+    def get_auth_provider(self, obj):
+        """
+        Определяет провайдер авторизации пользователя.
+        Возвращает: 'google' | 'apple' | 'x' | null
+        """
+        if obj.google_id:
+            return "google"
+        if obj.icloud_id:
+            return "apple"
+        if obj.x_id:
+            return "x"
+        return None
 
     def update(self, instance, validated_data):
         # Обновляем только разрешенные поля
