@@ -364,9 +364,9 @@ APPLE_REDIRECT_URI = os.environ.get(
 )
 APPLE_FRONTEND_CALLBACK_URL = os.environ.get(
     "APPLE_FRONTEND_CALLBACK_URL",
-    "https://sentx.ai/callback"
+    "https://sentx.ai/oauth/callback"
     if not DEBUG
-    else "http://localhost:3000/callback"
+    else "http://localhost:3000/oauth/callback"
 )
 
 # Social Auth URLs

@@ -385,8 +385,8 @@ class AppleCallbackView(APIView):
             # Сохраняем в cache
             cache.set(f"apple_session_{session_id}", session_data, APPLE_SESSION_TIMEOUT)
             
-            # Редиректим на frontend с session_id
-            redirect_url = f"{settings.APPLE_FRONTEND_CALLBACK_URL}?session_id={session_id}"
+            # Редиректим на frontend с sessionid
+            redirect_url = f"{settings.APPLE_FRONTEND_CALLBACK_URL}?sessionid={session_id}"
             return HttpResponseRedirect(redirect_url)
             
         except Exception as e:
@@ -398,10 +398,10 @@ class AppleCallbackView(APIView):
 
 class AppleUserView(APIView):
     """
-    Получение данных пользователя по session_id.
+    Получение данных пользователя по sessionid.
     Формат ответа идентичен тестовому примеру + JWT токены.
     
-    GET /api/auth/custom/apple/user/?session_id=XXX
+    GET /api/auth/custom/apple/user/?sessionid=XXX
     
     Response:
         {
@@ -418,11 +418,11 @@ class AppleUserView(APIView):
 
     def get(self, request):
         try:
-            session_id = request.GET.get("session_id")
+            session_id = request.GET.get("sessionid")
             
             if not session_id:
                 return response.Response(
-                    data={"detail": "session_id is required"},
+                    data={"detail": "sessionid is required"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             
