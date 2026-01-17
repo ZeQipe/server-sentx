@@ -749,9 +749,21 @@ class RegenerationView(views.APIView):
                 logger.error(f"Error during regeneration: {str(e)}, messageId: {message_id}")
                 traceback.print_exc()
         
-        # Send loading-start immediately
+        # Send start-generation and loading-start immediately
         if session_id and hasattr(ChatService, '_sse_queues') and session_id in ChatService._sse_queues:
             public_chat_id = Abfuscator.encode(salt=settings.ABFUSCATOR_ID_KEY, value=chat_session.id, min_length=17)
+            
+            # Отправляем start-generation (как в обычной отправке)
+            start_generation_data = {
+                "start-generation": {
+                    "chatId": public_chat_id,
+                    "messageId": message_id
+                }
+            }
+            for connection in ChatService._sse_queues[session_id]:
+                connection['queue'].put(start_generation_data)
+            
+            # Отправляем loading-start
             loading_start_data = {
                 "loading-start": {
                     "chatId": public_chat_id

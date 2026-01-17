@@ -93,6 +93,12 @@ class SentXProvider(LLMProviderInterface):
             response = await client.post(url, headers=headers, json=payload)
             elapsed = time.time() - start_time
             print(f"[LLM] Response received in {elapsed:.2f}s, status: {response.status_code}")
+            
+            # Логируем тело ответа при ошибке
+            if response.status_code >= 400:
+                print(f"[LLM] !!! ERROR RESPONSE BODY: {response.text}")
+                print(f"[LLM] !!! Request payload was: {json.dumps(payload, ensure_ascii=False)[:1000]}")
+            
             response.raise_for_status()
             result = response.json()
             print(f"[LLM] Response parsed. Keys: {list(result.keys())}")
