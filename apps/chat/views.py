@@ -226,6 +226,25 @@ class ChatMessagesView(views.APIView):
                     if session_id in ChatService._sse_queues:
                         for connection in ChatService._sse_queues[session_id]:
                             connection['queue'].put(done_generation_data)
+                    
+                    # Проверяем остаток токенов после генерации
+                    tokens_ended = False
+                    if user and user.is_authenticated:
+                        from apps.usageLimits.service import UsageLimitService
+                        result = UsageLimitService.check_request_limit(user)
+                        tokens_ended = not result["can_make_request"]
+                    else:
+                        from apps.anonymousUsageLimits.service import AnonymousUsageLimitService
+                        result = AnonymousUsageLimitService.check_anonymous_request_limit(ip_address)
+                        tokens_ended = not result["can_make_request"]
+                    
+                    # Отправляем end-tokens на ВСЕ SSE соединения
+                    end_tokens_data = {
+                        "end-tokens": tokens_ended
+                    }
+                    if session_id in ChatService._sse_queues:
+                        for connection in ChatService._sse_queues[session_id]:
+                            connection['queue'].put(end_tokens_data)
                 except Exception as e:
                     import traceback
                     print(f"[THREAD ERROR] Exception in generate_response for message_id={assistant_message_id}: {e}")
@@ -739,6 +758,25 @@ class RegenerationView(views.APIView):
                     }
                     for connection in ChatService._sse_queues[session_id]:
                         connection['queue'].put(done_data)
+                
+                # Проверяем остаток токенов после генерации
+                tokens_ended = False
+                if user and user.is_authenticated:
+                    from apps.usageLimits.service import UsageLimitService
+                    result = UsageLimitService.check_request_limit(user)
+                    tokens_ended = not result["can_make_request"]
+                else:
+                    from apps.anonymousUsageLimits.service import AnonymousUsageLimitService
+                    result = AnonymousUsageLimitService.check_anonymous_request_limit(ip_address)
+                    tokens_ended = not result["can_make_request"]
+                
+                # Send end-tokens
+                if session_id in ChatService._sse_queues:
+                    end_tokens_data = {
+                        "end-tokens": tokens_ended
+                    }
+                    for connection in ChatService._sse_queues[session_id]:
+                        connection['queue'].put(end_tokens_data)
                 
                 print(f"[REGENERATION] Completed regeneration for message_id={message_id}")
                 
