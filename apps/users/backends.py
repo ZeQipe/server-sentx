@@ -211,7 +211,7 @@ class CustomTwitterOAuth2(TwitterOAuth2):
         try:
             response = self.get_json(
                 "https://api.twitter.com/2/users/me",
-                params={"user.fields": "id,name,username"},
+                params={"user.fields": "id,name,username,profile_image_url"},
                 headers={"Authorization": f"Bearer {access_token}"},
             )
             return response

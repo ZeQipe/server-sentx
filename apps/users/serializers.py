@@ -49,6 +49,7 @@ class UserSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(
         required=False, validators=[UniqueValidator(queryset=User.objects.all())]
     )
+    avatar = serializers.URLField(source='avatar_url', read_only=True)
     auth_provider = serializers.SerializerMethodField()
 
     class Meta:
@@ -57,6 +58,7 @@ class UserSerializer(serializers.ModelSerializer):
             "id",
             "email",
             "name",
+            "avatar",
             "is_unlimited",
             "date_joined",
             "is_active",

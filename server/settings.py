@@ -511,6 +511,8 @@ SOCIAL_AUTH_PIPELINE = (
     "social_core.pipeline.user.user_details",
     # Custom step: Save google_id to User model
     "apps.users.pipeline.save_google_id",
+    # Custom step: Save avatar URL from provider response
+    "apps.users.pipeline.save_avatar_url",
 )
 
 # Streaming settings

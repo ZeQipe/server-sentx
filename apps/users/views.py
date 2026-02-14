@@ -220,6 +220,11 @@ class GoogleOneTapView(APIView):
                     )
                     created = True
             
+            # Update avatar_url from Google profile picture
+            if picture and picture != user.avatar_url:
+                user.avatar_url = picture
+                user.save(update_fields=['avatar_url'])
+            
             logger.info(f"Google One Tap auth successful for user {user.id} (created={created})")
             
             # 6. Generate JWT tokens

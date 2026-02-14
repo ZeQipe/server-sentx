@@ -126,3 +126,34 @@ def save_google_id(backend, user, response, *args, **kwargs):
     
     return None
 
+
+def save_avatar_url(backend, user, response, *args, **kwargs):
+    """
+    Save avatar URL to User model after successful authentication.
+    
+    Extracts avatar URL from the provider's response and saves it
+    to User.avatar_url. Updates on every login to keep the URL fresh.
+    
+    Supported providers:
+        - google-oauth2: response['picture']
+        - twitter-oauth2: response['data']['profile_image_url']
+    
+    Args:
+        backend: The social auth backend instance
+        user: User instance
+        response: OAuth2 response from provider
+        *args, **kwargs: Additional arguments from pipeline
+    """
+    avatar_url = None
+
+    if backend.name == 'google-oauth2':
+        avatar_url = response.get('picture')
+    elif backend.name == 'twitter-oauth2':
+        avatar_url = response.get('data', {}).get('profile_image_url')
+
+    if avatar_url and avatar_url != user.avatar_url:
+        logger.info(f"Updating avatar_url for user {user.email}: {avatar_url}")
+        user.avatar_url = avatar_url
+        user.save(update_fields=['avatar_url'])
+
+    return None
