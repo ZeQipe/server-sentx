@@ -191,7 +191,15 @@ class ChatService:
         Walk from current_node up to root via parent pointers.
         Returns messages in chronological order (root first).
         current_version / total_versions are already stored on each message.
+
+        Fallback: if current_node is not set (pre-migration data),
+        return all messages in flat chronological order.
         """
+        if chat_session.current_node is None:
+            return list(
+                Message.objects.filter(chat_session=chat_session).order_by("created_at")
+            )
+
         path: list[Message] = []
         node = chat_session.current_node
         while node is not None:
