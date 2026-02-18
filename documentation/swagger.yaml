@@ -32,7 +32,6 @@ components:
         chatId:
           oneOf:
             - type: string
-            - type: "null"
           description: |
             ID чата (может быть строкой или null). 
             Если null или не передан - пользователь неавторизован или создает новый чат,
@@ -263,3 +262,188 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /api/chat/share/:
+    post:
+      summary: Создать публичную ссылку на снимок чата
+      tags: [Share]
+      description: |
+        Создаёт снимок активной ветки чата и возвращает публичную ссылку.
+
+        Снимок — JSON-массив сообщений активной ветки на момент вызова.
+        Дальнейшие изменения в чате **не отражаются** в снимке.
+
+        **Кнопка «Поделиться» на фронте:**
+        1. `POST /api/chat/share/` с `chatId`.
+        2. Получить `shareUrl` (например `/s/abc123token`).
+        3. Полный URL: `https://sentx.ai` + `shareUrl`.
+        4. Скопировать в буфер / показать модалку.
+
+        Можно создать несколько ссылок для одного чата (каждая — отдельный снимок).
+
+        Снимки автоматически удаляются через 30 дней (настраивается в админ-панели).
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - chatId
+              properties:
+                chatId:
+                  type: string
+                  description: Обфусцированный ID чата
+                  example: "aB3dE5fG7hJ9kL1mN"
+      responses:
+        "201":
+          description: Ссылка создана
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  shareUrl:
+                    type: string
+                    description: Относительный путь для публичной ссылки
+                    example: "/s/Xt7kQ9wR2mNpL4vB3cYjH8fA6dE1gU5s"
+                  token:
+                    type: string
+                    description: Токен снимка
+                    example: "Xt7kQ9wR2mNpL4vB3cYjH8fA6dE1gU5s"
+              example:
+                shareUrl: "/s/Xt7kQ9wR2mNpL4vB3cYjH8fA6dE1gU5s"
+                token: "Xt7kQ9wR2mNpL4vB3cYjH8fA6dE1gU5s"
+        "403":
+          description: Нет доступа к чату
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Чат не найден
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      summary: Отозвать все публичные ссылки чата
+      tags: [Share]
+      description: |
+        Деактивирует **все** активные ссылки для указанного чата.
+        После этого `GET /api/s/{token}/` будет возвращать 404 для этих ссылок.
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - chatId
+              properties:
+                chatId:
+                  type: string
+                  description: Обфусцированный ID чата
+                  example: "aB3dE5fG7hJ9kL1mN"
+      responses:
+        "200":
+          description: Ссылки отозваны
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        "404":
+          description: Нет активных ссылок
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "No active share found"
+
+  /api/s/{token}/:
+    get:
+      summary: Публичный просмотр снимка чата
+      tags: [Share]
+      description: |
+        Возвращает снимок чата по токену. **Авторизация не требуется.**
+
+        Ссылка работает, пока владелец не отзовёт через `DELETE /api/chat/share/`
+        или пока снимок не будет удалён по истечении срока хранения (по умолчанию 30 дней).
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Токен снимка из shareUrl
+          example: "Xt7kQ9wR2mNpL4vB3cYjH8fA6dE1gU5s"
+      responses:
+        "200":
+          description: Снимок чата
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  title:
+                    type: string
+                    description: Название чата на момент создания снимка
+                    example: "Привет!"
+                  createdAt:
+                    type: string
+                    format: date-time
+                    description: Дата создания снимка
+                    example: "2026-02-18T12:00:00.000000Z"
+                  messages:
+                    type: array
+                    description: Сообщения активной ветки на момент снимка
+                    items:
+                      type: object
+                      properties:
+                        uid:
+                          type: string
+                          example: "uid-user-1"
+                        role:
+                          type: string
+                          enum: [user, assistant]
+                          example: "user"
+                        content:
+                          type: string
+                          example: "Привет!"
+                        createdAt:
+                          type: string
+                          format: date-time
+                          example: "2026-02-18T12:00:00.000000Z"
+              example:
+                title: "Привет!"
+                createdAt: "2026-02-18T12:00:00.000000Z"
+                messages:
+                  - uid: "uid-user-1"
+                    role: "user"
+                    content: "Привет!"
+                    createdAt: "2026-02-18T12:00:00.000000Z"
+                  - uid: "uid-assistant-1"
+                    role: "assistant"
+                    content: "Привет! Чем могу помочь?"
+                    createdAt: "2026-02-18T12:00:01.000000Z"
+        "404":
+          description: Снимок не найден или отозван
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "Shared chat not found"

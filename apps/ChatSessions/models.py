@@ -20,6 +20,13 @@ class ChatSession(models.Model):
         blank=True,
     )
     title = models.CharField(max_length=5000, blank=True, null=True)
+    current_node = models.ForeignKey(
+        "messages.Message",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -133,20 +133,136 @@ class ChatService:
     @staticmethod
     @transaction.atomic
     def add_message(
-        chat_session: ChatSession, role: str, content: str, message_uid: Optional[uuid.UUID] = None, version: int = 1
+        chat_session: ChatSession,
+        role: str,
+        content: str,
+        parent: Optional[Message] = None,
+        message_uid: Optional[uuid.UUID] = None,
+        version: int = 1,
     ) -> Message:
-        """Add a message to a chat session"""
+        """
+        Add a message to a chat session with branching support.
+
+        Automatically computes current_version / total_versions among siblings,
+        updates parent.active_child and chat_session.current_node.
+        """
         if message_uid is None:
             message_uid = uuid.uuid4()
 
-        return Message.objects.create(
-            chat_session=chat_session, role=role, content=content, uid=str(message_uid), version=version
+        sibling_count = Message.objects.filter(
+            parent=parent, chat_session=chat_session, role=role
+        ).count()
+
+        new_version = sibling_count + 1
+
+        msg = Message.objects.create(
+            chat_session=chat_session,
+            role=role,
+            content=content,
+            uid=str(message_uid),
+            version=version,
+            parent=parent,
+            current_version=new_version,
+            total_versions=new_version,
         )
+
+        if sibling_count > 0:
+            Message.objects.filter(
+                parent=parent, chat_session=chat_session, role=role
+            ).exclude(pk=msg.pk).update(total_versions=new_version)
+
+        if parent is not None:
+            parent.active_child = msg
+            parent.save(update_fields=["active_child"])
+
+        chat_session.current_node = msg
+        chat_session.save(update_fields=["current_node"])
+
+        return msg
 
     @staticmethod
     def get_chat_history(chat_session: ChatSession, limit: int = 100) -> list[Message]:
-        """Get chat history (last N messages)"""
+        """Legacy: get chat history as flat list (fallback)."""
         return list(chat_session.messages.order_by("-created_at")[:limit][::-1])
+
+    @staticmethod
+    def get_active_branch(chat_session: ChatSession) -> list[Message]:
+        """
+        Walk from current_node up to root via parent pointers.
+        Returns messages in chronological order (root first).
+        current_version / total_versions are already stored on each message.
+        """
+        path: list[Message] = []
+        node = chat_session.current_node
+        while node is not None:
+            path.append(node)
+            node = node.parent
+        path.reverse()
+        return path
+
+    @staticmethod
+    def get_active_branch_for_llm(parent_message: Message) -> list[dict[str, str]]:
+        """
+        Build the LLM context by walking up from *parent_message* to root.
+        Returns list of {"role": ..., "content": ...} in chronological order.
+        """
+        path: list[dict[str, str]] = []
+        node: Optional[Message] = parent_message
+        while node is not None:
+            path.append({"role": node.role, "content": node.content})
+            node = node.parent
+        path.reverse()
+        return path
+
+    @staticmethod
+    @transaction.atomic
+    def switch_branch(chat_session: ChatSession, target_message_uid: str) -> list[Message]:
+        """
+        Switch the active branch to the sibling identified by *target_message_uid*.
+
+        1. Update parent.active_child to target.
+        2. Walk down via active_child to the leaf.
+        3. Set chat_session.current_node = leaf.
+        4. Return the new active branch.
+        """
+        target = Message.objects.select_related("parent").get(
+            uid=target_message_uid, chat_session=chat_session
+        )
+
+        if target.parent is not None:
+            target.parent.active_child = target
+            target.parent.save(update_fields=["active_child"])
+
+        node = target
+        while node.active_child is not None:
+            node = node.active_child
+
+        chat_session.current_node = node
+        chat_session.save(update_fields=["current_node"])
+
+        return ChatService.get_active_branch(chat_session)
+
+    @staticmethod
+    def get_siblings_info(message: Message) -> dict:
+        """
+        Return branching metadata for a message.
+        current_version and total_versions are read directly from the instance.
+        siblings list is fetched only when needed (e.g. switch-branch).
+        """
+        siblings = list(
+            Message.objects.filter(
+                parent=message.parent,
+                chat_session=message.chat_session,
+                role=message.role,
+            )
+            .order_by("created_at")
+            .values_list("uid", flat=True)
+        )
+        return {
+            "currentVersion": message.current_version,
+            "totalVersions": message.total_versions,
+            "siblings": siblings,
+        }
 
     @staticmethod
     def check_usage_limits(user: Optional[User], ip_address: str) -> tuple[bool, Optional[str]]:
@@ -220,21 +336,25 @@ class ChatService:
         is_temporary: bool = False,
         assistant_message_id: Optional[str] = None,
         version: int = 1,
+        parent_message: Optional[Message] = None,
     ) -> Generator[dict[str, Any], None, None]:
         """
-        Process a chat message and stream the response
+        Process a chat message and stream the response.
 
         Args:
             user: User object (None for anonymous)
-            chat_id: Chat ID (permanent or temporary)
+            chat_id: Chat ID (db id)
             content: User message content
             ip_address: User's IP address
             is_temporary: Whether this is a temporary session
+            assistant_message_id: Pre-generated uid for the assistant message
+            version: Legacy version field value
+            parent_message: The user message that acts as parent for the assistant reply.
+                            Used to build branch-aware LLM context.
 
         Yields:
             SSE message chunks
         """
-        # Check usage limits
         can_proceed, error_msg = ChatService.check_usage_limits(user, ip_address)
         if not can_proceed:
             yield {
@@ -244,7 +364,6 @@ class ChatService:
             }
             return
 
-        # Get chat session (user message already saved in view)
         if chat_id:
             try:
                 chat_session = ChatSession.objects.get(id=chat_id)
@@ -255,97 +374,73 @@ class ChatService:
             yield {"error": "Chat session ID is required", "messageId": "", "chatId": ""}
             return
 
-        # Get chat history for context
-        from django.conf import settings
-        history = ChatService.get_chat_history(chat_session, limit=settings.CHAT_HISTORY_LIMIT)
-        messages = [{"role": msg.role, "content": msg.content} for msg in history]
+        # Build LLM context from the active branch
+        if parent_message is not None:
+            messages = ChatService.get_active_branch_for_llm(parent_message)
+        else:
+            # Fallback: legacy flat history
+            from django.conf import settings as _s
+            history = ChatService.get_chat_history(chat_session, limit=_s.CHAT_HISTORY_LIMIT)
+            messages = [{"role": msg.role, "content": msg.content} for msg in history]
 
-        # Get LLM client and get full response
         client = ChatService.get_llm_client()
-        # Используем переданный ID или генерируем новый
         if not assistant_message_id:
             assistant_message_id = str(uuid.uuid4())
-        
-        # Регистрируем стриминг в глобальном хранилище
+
         ChatService._streaming_control[chat_id] = {
             "should_continue": True,
             "message_id": assistant_message_id,
-            "started_at": datetime.now()
+            "started_at": datetime.now(),
         }
-        
+
         full_content = ""
-        llm_error = None  # Флаг ошибки от LLM
-        generation_completed = False  # Флаг успешной генерации
-        streaming_stopped = False  # Флаг остановки стриминга пользователем
-        
+        generation_completed = False
+        streaming_stopped = False
+        assistant_msg: Optional[Message] = None
+
         try:
-            # Получаем ПОЛНЫЙ ответ сразу (через async httpx в глобальном event loop)
             print(f"[SERVICE] Calling async LLM client for message_id={assistant_message_id}")
             from service.llm.async_loop import run_async
             response = run_async(client.chat(messages, stream=False))
             print(f"[SERVICE] LLM response received for message_id={assistant_message_id}")
-            
-            # Проверяем на ошибки
+
             if "error" in response:
-                llm_error = response["error"]
                 import logging
-                logger = logging.getLogger(__name__)
-                logger.error(f"LLM Error: {llm_error}, messageId: {assistant_message_id}, chatId: {chat_id}")
-                
-                yield {
-                    "error": llm_error,
-                    "messageId": assistant_message_id,
-                    "chatId": chat_id,
-                }
+                logging.getLogger(__name__).error(
+                    f"LLM Error: {response['error']}, messageId: {assistant_message_id}, chatId: {chat_id}"
+                )
+                yield {"error": response["error"], "messageId": assistant_message_id, "chatId": chat_id}
                 return
-            
-            # Извлекаем текст ответа
+
             choices = response.get("choices", [])
             if not choices:
-                yield {
-                    "error": "No response from LLM",
-                    "messageId": assistant_message_id,
-                    "chatId": chat_id,
-                }
+                yield {"error": "No response from LLM", "messageId": assistant_message_id, "chatId": chat_id}
                 return
-            
-            message = choices[0].get("message", {})
-            full_content = message.get("content", "")
-            
+
+            msg_obj = choices[0].get("message", {})
+            full_content = msg_obj.get("content", "")
             if not full_content:
-                yield {
-                    "error": "Empty response from LLM",
-                    "messageId": assistant_message_id,
-                    "chatId": chat_id,
-                }
+                yield {"error": "Empty response from LLM", "messageId": assistant_message_id, "chatId": chat_id}
                 return
-            
-            # Отправляем loading-end перед первым чанком
-            yield {
-                "loading-end": {
-                    "chatId": chat_id
-                }
-            }
-            
-            # Дробим на чанки и отправляем (размер чанка из settings)
+
+            yield {"loading-end": {"chatId": chat_id}}
+
             from django.conf import settings
             chunk_size = settings.STREAMING_CHUNK_SIZE
             chunk_delay = settings.STREAMING_CHUNK_DELAY
             accumulated_content = ""
-            
+
             for i in range(0, len(full_content), chunk_size):
-                # Проверяем флаг остановки стриминга
                 if chat_id in ChatService._streaming_control:
                     if not ChatService._streaming_control[chat_id]["should_continue"]:
-                        print(f"[SERVICE] Streaming stopped by user for chat_id={chat_id}, message_id={assistant_message_id}")
+                        print(f"[SERVICE] Streaming stopped by user for chat_id={chat_id}")
                         streaming_stopped = True
-                        full_content = accumulated_content  # Сохраняем только отправленный контент
+                        full_content = accumulated_content
                         break
-                
-                chunk_text = full_content[i:i + chunk_size]
+
+                chunk_text = full_content[i : i + chunk_size]
                 accumulated_content += chunk_text
-                
-                # Отправляем накопленный контент
+
                 try:
                     yield {
                         "messageId": assistant_message_id,
@@ -353,74 +448,57 @@ class ChatService:
                         "role": "assistant",
                         "content": accumulated_content,
                         "v": str(version),
+                        "parentId": parent_message.uid if parent_message else None,
+                        "currentVersion": None,
+                        "totalVersions": None,
                         "resolveMessage": False,
                     }
-                    
-                    # Задержка между чанками (если указана)
                     if chunk_delay > 0:
                         import time
                         time.sleep(chunk_delay)
                 except GeneratorExit:
-                    # SSE оборвалось
                     pass
-            
-            # Если стриминг был остановлен пользователем
+
             if streaming_stopped:
-                # Отправляем событие stop-streaming
                 try:
-                    yield {
-                        "stop-streaming": {
-                            "chatId": chat_id,
-                            "messageId": assistant_message_id
-                        }
-                    }
-                except:
-                    pass  # SSE может быть закрыто
+                    yield {"stop-streaming": {"chatId": chat_id, "messageId": assistant_message_id}}
+                except Exception:
+                    pass
             else:
-                # Генерация завершена успешно (не была остановлена)
                 generation_completed = True
 
         except Exception as e:
-            # Ошибка на стороне сервера (не LLM)
-            import traceback
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f"Server Error during generation: {str(e)}, messageId: {assistant_message_id}, chatId: {chat_id}")
+            import traceback, logging
+            logging.getLogger(__name__).error(
+                f"Server Error during generation: {e}, messageId: {assistant_message_id}, chatId: {chat_id}"
+            )
             traceback.print_exc()
-            
-            # Пытаемся отправить ошибку в SSE
             try:
-                yield {
-                    "error": f"Server error: {str(e)}",
-                    "messageId": assistant_message_id,
-                    "chatId": chat_id,
-                }
-            except:
-                pass  # SSE может быть уже закрыто
-        
+                yield {"error": f"Server error: {e}", "messageId": assistant_message_id, "chatId": chat_id}
+            except Exception:
+                pass
+
         finally:
-            # Очищаем запись о стриминге из глобального хранилища
             if chat_id in ChatService._streaming_control:
                 del ChatService._streaming_control[chat_id]
-                print(f"[SERVICE] Streaming control cleaned for chat_id={chat_id}")
-            
-            # ВСЕГДА сохраняем ответ, если что-то было сгенерировано
+
             if full_content:
                 try:
-                    ChatService.add_message(
-                        chat_session, "assistant", full_content, uuid.UUID(assistant_message_id)
+                    assistant_msg = ChatService.add_message(
+                        chat_session,
+                        "assistant",
+                        full_content,
+                        parent=parent_message,
+                        message_uid=uuid.UUID(assistant_message_id),
                     )
-                    
-                    # Increment usage count только если генерация успешна
                     if generation_completed:
                         ChatService.increment_usage(user, ip_address)
-                    
                 except Exception as save_error:
                     import logging
-                    logger = logging.getLogger(__name__)
-                    logger.error(f"Failed to save assistant message: {str(save_error)}, messageId: {assistant_message_id}")
-            
-            # Отправляем финальное сообщение с resolveMessage (если SSE живо)
+                    logging.getLogger(__name__).error(
+                        f"Failed to save assistant message: {save_error}, messageId: {assistant_message_id}"
+                    )
+
             if generation_completed and full_content:
                 try:
                     yield {
@@ -429,8 +507,11 @@ class ChatService:
                         "role": "assistant",
                         "content": full_content,
                         "v": str(version),
+                        "parentId": parent_message.uid if parent_message else None,
+                        "currentVersion": assistant_msg.current_version if assistant_msg else 1,
+                        "totalVersions": assistant_msg.total_versions if assistant_msg else 1,
                         "resolveMessage": ChatService.should_show_resolve_message(user),
                     }
-                except:
-                    pass  # SSE может быть закрыто
+                except Exception:
+                    pass
 

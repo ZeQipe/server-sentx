@@ -7,6 +7,7 @@ class SendMessageRequestSerializer(serializers.Serializer):
 
     content = serializers.CharField(required=True, allow_blank=False)
     chatId = ObfuscatedIDField(required=False, allow_null=True)
+    parentId = serializers.CharField(required=False, allow_null=True, default=None)
 
     def validate_content(self, value):
         """Validate that content is not empty"""
@@ -21,6 +22,9 @@ class SendMessageResponseSerializer(serializers.Serializer):
     messageId = serializers.CharField()
     chatId = serializers.CharField()
     isTemporary = serializers.BooleanField()
+    parentId = serializers.CharField(allow_null=True)
+    currentVersion = serializers.IntegerField()
+    totalVersions = serializers.IntegerField()
 
 
 class ChatMessageSerializer(serializers.Serializer):
@@ -32,6 +36,9 @@ class ChatMessageSerializer(serializers.Serializer):
     content = serializers.CharField()
     v = serializers.CharField()
     createdAt = serializers.DateTimeField()
+    parentId = serializers.CharField(allow_null=True)
+    currentVersion = serializers.IntegerField()
+    totalVersions = serializers.IntegerField()
 
 
 class ChatHistoryResponseSerializer(serializers.Serializer):
@@ -49,4 +56,34 @@ class SSEMessageSerializer(serializers.Serializer):
     role = serializers.ChoiceField(choices=["user", "assistant"])
     content = serializers.CharField()
     resolveMessage = serializers.BooleanField()
+    parentId = serializers.CharField(allow_null=True)
+    currentVersion = serializers.IntegerField()
+    totalVersions = serializers.IntegerField()
 
+
+class SwitchBranchRequestSerializer(serializers.Serializer):
+    """Serializer for switch-branch request (POST /chat/switch-branch/)"""
+
+    chatId = ObfuscatedIDField(required=True)
+    messageId = serializers.CharField(required=True)
+
+
+class RegenerationRequestSerializer(serializers.Serializer):
+    """Serializer for regeneration request (POST /api/regeneration/)"""
+
+    messageId = serializers.CharField(required=True)
+    sessionId = serializers.CharField(required=True)
+    parentId = serializers.CharField(required=True)
+    chatId = ObfuscatedIDField(required=True)
+
+
+class ShareChatRequestSerializer(serializers.Serializer):
+    """POST /api/chat/share/ — создать ссылку на снимок чата"""
+
+    chatId = ObfuscatedIDField(required=True)
+
+
+class RevokShareRequestSerializer(serializers.Serializer):
+    """DELETE /api/chat/share/ — отозвать ссылку"""
+
+    chatId = ObfuscatedIDField(required=True)

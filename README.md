@@ -10,6 +10,7 @@ SentX is a generative artificial intelligence chatbot backend built with Django 
 - 📊 **Usage Limits** - Request limits for authenticated and anonymous users
 - 🎯 **Admin Panel** - Custom Django admin interface with chat management
 - 🌊 **SSE Streaming** - Server-Sent Events for real-time AI responses
+- 🌳 **Message Branching** - Edit messages and regenerate responses with full branch history (like ChatGPT)
 - 📁 **File Attachments** - Support for file uploads in chat messages
 - 👍 **Feedback System** - User feedback on AI responses
 
@@ -168,6 +169,8 @@ ABFUSCATOR_ID_KEY=your-secret-abfuscator-key
 - `GET /chat/sessions/<id>/` - Get chat session
 - `PATCH /chat/sessions/<id>/` - Update chat session
 - `DELETE /chat/sessions/<id>/` - Delete chat session
+- `POST /chat/switch-branch/` - Switch active branch (message branching)
+- `POST /api/regeneration/` - Regenerate assistant response (creates new branch)
 
 ### Payments
 
@@ -185,6 +188,21 @@ ABFUSCATOR_ID_KEY=your-secret-abfuscator-key
 - `GET /api/swagger/` - Swagger UI
 - `GET /api/redoc/` - ReDoc UI
 - `GET /api/schema/` - OpenAPI schema
+
+## Message Branching
+
+Система ветвления диалогов позволяет редактировать сообщения и регенерировать ответы, сохраняя все ветки истории. Сообщения организованы в дерево с `parent`/`active_child` указателями.
+
+**Ключевые изменения:**
+
+- **Message** — новые поля: `parent`, `active_child`, `current_version`, `total_versions`
+- **ChatSession** — новое поле: `current_node` (текущий лист активной ветки)
+- **ChatService** — новые методы: `get_active_branch()`, `get_active_branch_for_llm()`, `switch_branch()`, `get_siblings_info()`
+- **Регенерация** — создаёт новый sibling вместо перезаписи, сохраняя старую ветку
+- **API** — все ответы и SSE-события содержат `parentId`, `currentVersion`, `totalVersions`
+- **Новый эндпоинт** — `POST /api/chat/switch-branch/` для переключения между ветками
+
+Подробная документация: [`docs/message-branching.md`](docs/message-branching.md)
 
 ## Development
 

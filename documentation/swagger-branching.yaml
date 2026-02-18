@@ -1,0 +1,992 @@
+openapi: 3.0.3
+info:
+  title: SentX Chat API — Message Branching
+  description: |
+    Документация изменений API, связанных с ветвлением диалогов.
+
+    Сообщения организованы в дерево. Каждое хранит указатель на родителя (`parent`)
+    и на активного потомка (`active_child`). Сессия чата хранит указатель на текущий
+    лист дерева (`current_node`), определяющий отображаемую ветку.
+
+    Фронт всегда отправляет `parentId` с каждым запросом — это однозначно определяет
+    точку ветвления без рассинхронизации.
+
+    **Новые поля во всех ответах/SSE с сообщениями:**
+    - `parentId` — uid родителя (null для корневого)
+    - `currentVersion` — номер среди siblings (1-based), «2» из «< 2/3 >»
+    - `totalVersions` — всего siblings, «3» из «< 2/3 >»
+  version: 2.0.0
+
+servers:
+  - url: https://api.sentx.ai
+    description: Production server
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    # ─── Branching-поля (переиспользуемые) ───
+
+    BranchingFields:
+      type: object
+      description: Поля ветвления, добавленные ко всем сообщениям
+      properties:
+        parentId:
+          type: string
+          nullable: true
+          description: uid родительского сообщения (null для корневого)
+        currentVersion:
+          type: integer
+          description: Порядковый номер среди siblings (1-based)
+        totalVersions:
+          type: integer
+          description: Общее количество siblings
+
+    # ─── Request schemas ───
+
+    SendMessageRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+          description: Текст сообщения
+          example: "Привет, как дела?"
+        chatId:
+          type: string
+          nullable: true
+          description: Обфусцированный ID чата (null — новый чат)
+          example: "aB3dE5fG7hJ9kL1mN"
+        sessionId:
+          type: string
+          description: ID SSE-сессии
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        parentId:
+          type: string
+          nullable: true
+          description: |
+            **[НОВОЕ]** uid родительского сообщения для ветвления.
+            - Передан — сообщение прикрепляется к указанному parent.
+            - Не передан / null, чат существует — parent = current_node сессии.
+            - Нет chatId — parent = null (первое сообщение нового чата).
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+    RegenerationRequest:
+      type: object
+      required:
+        - messageId
+        - sessionId
+        - parentId
+        - chatId
+      properties:
+        messageId:
+          type: string
+          description: uid оригинального assistant-сообщения
+          example: "uid-assistant-original"
+        sessionId:
+          type: string
+          description: ID SSE-сессии
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        parentId:
+          type: string
+          description: |
+            **[НОВОЕ, обязательное]** uid user-сообщения (parent ассистентского).
+            По нему определяется точка ветвления и контекст LLM.
+          example: "uid-user-parent"
+        chatId:
+          type: string
+          description: |
+            **[НОВОЕ, обязательное]** Обфусцированный ID чата.
+          example: "aB3dE5fG7hJ9kL1mN"
+
+    SwitchBranchRequest:
+      type: object
+      required:
+        - chatId
+        - messageId
+      properties:
+        chatId:
+          type: string
+          description: Обфусцированный ID чата
+          example: "aB3dE5fG7hJ9kL1mN"
+        messageId:
+          type: string
+          description: uid sibling-сообщения, на которое переключаемся
+          example: "uid-user-v2"
+
+    # ─── Response schemas ───
+
+    SendMessageResponse:
+      type: object
+      properties:
+        messageId:
+          type: string
+          description: uid созданного user-сообщения
+          example: "f7e6d5c4-b3a2-1098-7654-321fedcba098"
+        chatId:
+          type: string
+          example: "aB3dE5fG7hJ9kL1mN"
+        isTemporary:
+          type: boolean
+          description: Всегда false
+          example: false
+        parentId:
+          type: string
+          nullable: true
+          description: "**[НОВОЕ]** uid родителя (null для первого сообщения)"
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        currentVersion:
+          type: integer
+          description: "**[НОВОЕ]**"
+          example: 1
+        totalVersions:
+          type: integer
+          description: "**[НОВОЕ]**"
+          example: 1
+
+    RegenerationResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Regeneration started"
+        messageId:
+          type: string
+          description: |
+            **[ИЗМЕНЕНО]** uid НОВОГО assistant-сообщения (не оригинального).
+          example: "uid-assistant-new"
+        parentId:
+          type: string
+          description: "**[НОВОЕ]** uid user-сообщения (parent)"
+          example: "uid-user-parent"
+        currentVersion:
+          type: integer
+          description: "**[НОВОЕ]**"
+          example: 3
+        totalVersions:
+          type: integer
+          description: "**[НОВОЕ]**"
+          example: 3
+
+    ChatMessage:
+      type: object
+      description: Сообщение в ответах history / switch-branch
+      properties:
+        messageId:
+          type: string
+          example: "uid-user-1"
+        chatId:
+          type: string
+          example: "aB3dE5fG7hJ9kL1mN"
+        role:
+          type: string
+          enum: [user, assistant]
+          example: "user"
+        content:
+          type: string
+          example: "Привет!"
+        v:
+          type: string
+          example: "1"
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-02-18T12:00:00.000000Z"
+        parentId:
+          type: string
+          nullable: true
+          description: "**[НОВОЕ]** uid родителя (null для корневого)"
+          example: null
+        currentVersion:
+          type: integer
+          description: "**[НОВОЕ]**"
+          example: 1
+        totalVersions:
+          type: integer
+          description: "**[НОВОЕ]**"
+          example: 2
+
+    SessionMessage:
+      type: object
+      description: Сообщение в ответе GET /api/chat/sessions/{id}/
+      properties:
+        id:
+          type: string
+          description: Обфусцированный ID
+          example: "xY7zW9vU3tS1rQ5p"
+        uid:
+          type: string
+          format: uuid
+          example: "uid-user-1"
+        role:
+          type: string
+          enum: [user, assistant, system]
+          example: "user"
+        content:
+          type: string
+          example: "Привет!"
+        version:
+          type: integer
+          description: Legacy-версия
+          example: 1
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-02-18T12:00:00.000000Z"
+        parentId:
+          type: string
+          nullable: true
+          description: "**[НОВОЕ]**"
+          example: null
+        currentVersion:
+          type: integer
+          description: "**[НОВОЕ]**"
+          example: 1
+        totalVersions:
+          type: integer
+          description: "**[НОВОЕ]**"
+          example: 1
+
+    MessagesListResponse:
+      type: object
+      properties:
+        chatId:
+          type: string
+          example: "aB3dE5fG7hJ9kL1mN"
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+
+    SessionDetailResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "aB3dE5fG7hJ9kL1mN"
+        title:
+          type: string
+          example: "Привет!"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionMessage"
+          description: "**[ИЗМЕНЕНО]** Только активная ветка (не все сообщения)"
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+
+    # ─── SSE schemas ───
+
+    SSE_UserMessage:
+      type: object
+      description: |
+        **[ИЗМЕНЕНО]** SSE: сообщение пользователя. Добавлены parentId, currentVersion, totalVersions.
+      properties:
+        messageId:
+          type: string
+        chatId:
+          type: string
+        role:
+          type: string
+          enum: [user]
+        content:
+          type: string
+        v:
+          type: string
+        parentId:
+          type: string
+          nullable: true
+          description: "**[НОВОЕ]**"
+        currentVersion:
+          type: integer
+          description: "**[НОВОЕ]**"
+        totalVersions:
+          type: integer
+          description: "**[НОВОЕ]**"
+
+    SSE_AssistantChunk:
+      type: object
+      description: |
+        **[ИЗМЕНЕНО]** SSE: assistant chunk. Добавлены parentId, currentVersion, totalVersions.
+        content — НАКОПЛЕННЫЙ текст (не дельта).
+      properties:
+        messageId:
+          type: string
+        chatId:
+          type: string
+        role:
+          type: string
+          enum: [assistant]
+        content:
+          type: string
+          description: Накопленный текст
+        v:
+          type: string
+        resolveMessage:
+          type: boolean
+          description: false в промежуточных, true/false в финальном
+        parentId:
+          type: string
+          nullable: true
+          description: "**[НОВОЕ]** uid user-сообщения (parent)"
+        currentVersion:
+          type: integer
+          description: "**[НОВОЕ]** null в промежуточных, число в финальном"
+        totalVersions:
+          type: integer
+          description: "**[НОВОЕ]** null в промежуточных, число в финальном"
+
+security:
+  - bearerAuth: []
+  - {}
+
+paths:
+  # ─────────────────────────────────────────────
+  # POST /api/chat/messages/
+  # ─────────────────────────────────────────────
+  /api/chat/messages/:
+    post:
+      summary: Отправить сообщение в чат
+      tags: [Chat]
+      description: |
+        Создаёт user-сообщение и запускает генерацию ответа ассистента.
+
+        **Изменения (branching):**
+        - Новое входящее поле `parentId` — определяет точку ветвления.
+        - Ответ содержит `parentId`, `currentVersion`, `totalVersions`.
+        - SSE user message и assistant chunks содержат эти же поля.
+
+        **Логика parentId:**
+        - Передан → parent = сообщение с этим uid.
+        - Не передан, чат существует → parent = current_node сессии.
+        - Новый чат → parent = null.
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageRequest"
+            examples:
+              new_chat:
+                summary: Новый чат (первое сообщение, parentId не нужен)
+                value:
+                  content: "Привет!"
+                  sessionId: "550e8400-e29b-41d4-a716-446655440000"
+              continue:
+                summary: Продолжение чата (parentId не указан → parent = current_node)
+                value:
+                  content: "Расскажи подробнее"
+                  chatId: "aB3dE5fG7hJ9kL1mN"
+                  sessionId: "550e8400-e29b-41d4-a716-446655440000"
+              edit_message:
+                summary: |
+                  Редактирование сообщения пользователя.
+                  parentId = parent РЕДАКТИРУЕМОГО сообщения (не само сообщение).
+                  Например: K1(parentId=null) → A1 → K2 → A2.
+                  Пользователь редактирует K1 → parentId = null (parent K1).
+                  Создаётся K1' как sibling K1, затем генерируется A1'.
+                value:
+                  content: "Привет, расскажи про Python!"
+                  chatId: "aB3dE5fG7hJ9kL1mN"
+                  sessionId: "550e8400-e29b-41d4-a716-446655440000"
+                  parentId: null
+              edit_message_deep:
+                summary: |
+                  Редактирование НЕ первого сообщения.
+                  K1 → A1 → K2(parentId=A1.uid) → A2.
+                  Пользователь редактирует K2 → parentId = A1.uid.
+                  Создаётся K2' как sibling K2, генерируется A2'.
+                value:
+                  content: "Переформулирую вопрос..."
+                  chatId: "aB3dE5fG7hJ9kL1mN"
+                  sessionId: "550e8400-e29b-41d4-a716-446655440000"
+                  parentId: "uid-of-A1-message"
+      responses:
+        "200":
+          description: Сообщение создано
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SendMessageResponse"
+        "404":
+          description: Чат или parent не найден
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "Parent message not found"
+        "429":
+          description: Лимит запросов
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ─────────────────────────────────────────────
+  # GET /api/chat/history
+  # ─────────────────────────────────────────────
+  /api/chat/history:
+    get:
+      summary: Получить историю чата (активная ветка)
+      tags: [Chat]
+      description: |
+        **[ИЗМЕНЕНО]** Возвращает сообщения **активной ветки** — обход от current_node
+        вверх по parent до корня. Раньше: плоский ORDER BY created_at.
+
+        Каждое сообщение содержит `parentId`, `currentVersion`, `totalVersions`.
+        Для переключения ветки → `POST /api/chat/switch-branch/`.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: chatId
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Обфусцированный ID чата
+      responses:
+        "200":
+          description: Сообщения активной ветки
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagesListResponse"
+              example:
+                chatId: "aB3dE5fG7hJ9kL1mN"
+                messages:
+                  - messageId: "uid-user-1"
+                    chatId: "aB3dE5fG7hJ9kL1mN"
+                    role: "user"
+                    content: "Привет!"
+                    v: "1"
+                    createdAt: "2026-02-18T12:00:00Z"
+                    parentId: null
+                    currentVersion: 1
+                    totalVersions: 2
+                  - messageId: "uid-assistant-1"
+                    chatId: "aB3dE5fG7hJ9kL1mN"
+                    role: "assistant"
+                    content: "Привет! Чем помочь?"
+                    v: "1"
+                    createdAt: "2026-02-18T12:00:01Z"
+                    parentId: "uid-user-1"
+                    currentVersion: 2
+                    totalVersions: 3
+        "404":
+          description: Чат не найден
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ─────────────────────────────────────────────
+  # GET /api/chat/sessions/{id}/
+  # ─────────────────────────────────────────────
+  /api/chat/sessions/{id}/:
+    get:
+      summary: Детали сессии с сообщениями активной ветки
+      tags: [Chat Sessions]
+      description: |
+        **[ИЗМЕНЕНО]** Поле `messages` теперь содержит только активную ветку
+        (через `get_active_branch()`), а не все сообщения сессии.
+
+        Каждое сообщение содержит `parentId`, `currentVersion`, `totalVersions`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Обфусцированный ID сессии
+      responses:
+        "200":
+          description: Детали сессии
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionDetailResponse"
+              example:
+                id: "aB3dE5fG7hJ9kL1mN"
+                title: "Привет!"
+                created_at: "2026-02-18T12:00:00Z"
+                updated_at: "2026-02-18T12:05:00Z"
+                messages:
+                  - id: "xY7zW9vU3tS1rQ5p"
+                    uid: "uid-user-1"
+                    role: "user"
+                    content: "Привет!"
+                    version: 1
+                    created_at: "2026-02-18T12:00:00Z"
+                    parentId: null
+                    currentVersion: 1
+                    totalVersions: 2
+                  - id: "mN5oP7qR9sT1uV3w"
+                    uid: "uid-assistant-1"
+                    role: "assistant"
+                    content: "Привет! Чем помочь?"
+                    version: 1
+                    created_at: "2026-02-18T12:00:01Z"
+                    parentId: "uid-user-1"
+                    currentVersion: 1
+                    totalVersions: 1
+        "404":
+          description: Сессия не найдена
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ─────────────────────────────────────────────
+  # POST /api/regeneration/
+  # ─────────────────────────────────────────────
+  /api/regeneration/:
+    post:
+      summary: Регенерировать ответ ассистента (создаёт новую ветку)
+      tags: [Chat]
+      description: |
+        **ПОЛНАЯ ПЕРЕРАБОТКА.**
+
+        **Старая логика (удалена):**
+        1. Удалить сообщения после целевого.
+        2. Перезаписать content целевого.
+
+        **Новая логика (ветвление):**
+        1. НЕ удалять ничего — старая ветка сохраняется.
+        2. Создать НОВОЕ assistant-сообщение как sibling.
+        3. Пересчитать current_version / total_versions всех siblings.
+        4. Контекст LLM из ветки: обход от parentId вверх до корня.
+
+        **Изменения во входящих полях:**
+        - `parentId` — **[НОВОЕ, обязательное]** uid user-сообщения.
+        - `chatId` — **[НОВОЕ, обязательное]** обфусцированный ID чата.
+
+        **Изменения в ответе:**
+        - `messageId` — uid НОВОГО сообщения (не оригинального).
+        - Добавлены `parentId`, `currentVersion`, `totalVersions`.
+        - Убрано поле `newVersion`.
+
+        **SSE:** все чанки содержат uid НОВОГО сообщения и branching-поля.
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegenerationRequest"
+            example:
+              messageId: "uid-assistant-original"
+              sessionId: "550e8400-e29b-41d4-a716-446655440000"
+              parentId: "uid-user-parent"
+              chatId: "aB3dE5fG7hJ9kL1mN"
+      responses:
+        "200":
+          description: Регенерация запущена
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegenerationResponse"
+              example:
+                success: true
+                message: "Regeneration started"
+                messageId: "uid-assistant-new"
+                parentId: "uid-user-parent"
+                currentVersion: 3
+                totalVersions: 3
+        "400":
+          description: Невалидные данные
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Нет доступа
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Чат или parent не найден
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ─────────────────────────────────────────────
+  # POST /api/chat/switch-branch/
+  # ─────────────────────────────────────────────
+  /api/chat/switch-branch/:
+    post:
+      summary: Переключить активную ветку диалога
+      tags: [Chat]
+      description: |
+        **НОВЫЙ ЭНДПОИНТ.**
+
+        Вызывается когда пользователь нажимает «<» / «>» в навигации «< 2/3 >».
+
+        **Логика:**
+        1. Находит сообщение по `messageId`, проверяет принадлежность чату.
+        2. Обновляет `target.parent.active_child = target`.
+        3. Идёт вниз по `active_child` до листа → обновляет `current_node`.
+        4. Возвращает полный массив сообщений новой ветки.
+
+        Формат ответа идентичен `GET /api/chat/history`.
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SwitchBranchRequest"
+            example:
+              chatId: "aB3dE5fG7hJ9kL1mN"
+              messageId: "uid-user-v2"
+      responses:
+        "200":
+          description: Ветка переключена
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagesListResponse"
+              example:
+                chatId: "aB3dE5fG7hJ9kL1mN"
+                messages:
+                  - messageId: "uid-user-v2"
+                    chatId: "aB3dE5fG7hJ9kL1mN"
+                    role: "user"
+                    content: "Переформулированный вопрос"
+                    v: "1"
+                    createdAt: "2026-02-18T12:01:00Z"
+                    parentId: null
+                    currentVersion: 2
+                    totalVersions: 2
+                  - messageId: "uid-assistant-v2"
+                    chatId: "aB3dE5fG7hJ9kL1mN"
+                    role: "assistant"
+                    content: "Ответ на переформулированный вопрос"
+                    v: "1"
+                    createdAt: "2026-02-18T12:01:01Z"
+                    parentId: "uid-user-v2"
+                    currentVersion: 1
+                    totalVersions: 1
+        "403":
+          description: Нет доступа
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Чат или сообщение не найдено
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ─────────────────────────────────────────────
+  # GET /api/chat/stream (SSE)
+  # ─────────────────────────────────────────────
+  /api/chat/stream:
+    get:
+      summary: SSE стрим (с branching-полями)
+      tags: [SSE]
+      description: |
+        Постоянное SSE-соединение для получения сообщений в реальном времени.
+
+        **[ИЗМЕНЕНО]** Во все события с данными сообщений добавлены branching-поля.
+
+        ## Поток событий при отправке сообщения
+
+        ```
+        connected (sessionId)
+        → [POST /api/chat/messages/]
+        → user-message      ← parentId, currentVersion, totalVersions [НОВОЕ]
+        → start-generation
+        → loading-start
+        → loading-end
+        → assistant-chunk    ← parentId, currentVersion, totalVersions [НОВОЕ]
+        → assistant-chunk (×N)
+        → assistant-final    ← parentId, currentVersion, totalVersions [НОВОЕ]
+        → done-generation
+        → end-tokens
+        ```
+
+        ## Поток событий при регенерации
+
+        ```
+        → [POST /api/regeneration/]
+        → start-generation (messageId = uid НОВОГО сообщения)
+        → loading-start
+        → loading-end
+        → assistant-chunk    ← НОВЫЙ messageId, parentId, currentVersion, totalVersions
+        → assistant-chunk (×N)
+        → assistant-final
+        → done-generation
+        → end-tokens
+        ```
+
+        **Важно:** при регенерации `messageId` — uid НОВОГО assistant-сообщения.
+        Фронт добавляет его в дерево как новый sibling, не обновляет старое.
+
+        ## Таблица событий
+
+        | Событие | Branching-поля | Описание |
+        |---------|---------------|----------|
+        | connected | — | Соединение установлено |
+        | user-message | parentId, currentVersion, totalVersions | **[ИЗМЕНЕНО]** Сообщение пользователя |
+        | start-generation | — | Начало генерации |
+        | loading-start | — | Показать лоадер |
+        | loading-end | — | Скрыть лоадер |
+        | assistant-chunk | parentId, currentVersion, totalVersions | **[ИЗМЕНЕНО]** Частичный контент |
+        | assistant-final | parentId, currentVersion, totalVersions | **[ИЗМЕНЕНО]** Финальный контент |
+        | done-generation | — | Генерация завершена |
+        | end-tokens | — | Остаток токенов |
+        | stop-streaming | — | Стриминг остановлен |
+        | ping | — | Проверка живости |
+        | error | — | Ошибка |
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: sessionId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: ID сессии для восстановления
+      responses:
+        "200":
+          description: SSE поток
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              examples:
+                user_message:
+                  summary: User message (с branching-полями)
+                  value: |
+                    data: {"messageId":"uid-user-1","chatId":"aB3dE5fG7hJ9kL1mN","role":"user","content":"Привет!","v":"1","parentId":null,"currentVersion":1,"totalVersions":2}
+                assistant_chunk:
+                  summary: Assistant chunk (с branching-полями)
+                  value: |
+                    data: {"messageId":"uid-assistant-1","chatId":"aB3dE5fG7hJ9kL1mN","role":"assistant","content":"Привет! Чем","v":"1","parentId":"uid-user-1","currentVersion":1,"totalVersions":1,"resolveMessage":false}
+                assistant_final:
+                  summary: Assistant final
+                  value: |
+                    data: {"messageId":"uid-assistant-1","chatId":"aB3dE5fG7hJ9kL1mN","role":"assistant","content":"Привет! Чем могу помочь?","v":"1","parentId":"uid-user-1","currentVersion":1,"totalVersions":1,"resolveMessage":true}
+                regen_chunk:
+                  summary: Regeneration (новый messageId!)
+                  value: |
+                    data: {"messageId":"uid-assistant-NEW","chatId":"aB3dE5fG7hJ9kL1mN","role":"assistant","content":"Здравствуйте!","v":"1","parentId":"uid-user-1","currentVersion":3,"totalVersions":3,"resolveMessage":false}
+
+  # ─────────────────────────────────────────────
+  # POST /api/chat/share/ — создать ссылку
+  # ─────────────────────────────────────────────
+  /api/chat/share/:
+    post:
+      summary: Создать публичную ссылку на снимок чата
+      tags: [Share]
+      description: |
+        Создаёт снимок активной ветки чата и возвращает публичную ссылку.
+
+        **Снимок** — JSON массив сообщений активной ветки на момент вызова.
+        Дальнейшие изменения в чате НЕ отражаются в снимке.
+        Для обновления — удалите старую ссылку и создайте новую.
+
+        **Кнопка «Поделиться» на фронте:**
+        1. Вызвать `POST /api/chat/share/` с `chatId`.
+        2. Получить `shareUrl` (например `/s/abc123token`).
+        3. Составить полный URL: `https://sentx.ai/s/abc123token`.
+        4. Показать пользователю / скопировать в буфер.
+
+        Можно создать несколько ссылок для одного чата (каждая — свой снимок).
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - chatId
+              properties:
+                chatId:
+                  type: string
+                  description: Обфусцированный ID чата
+                  example: "aB3dE5fG7hJ9kL1mN"
+      responses:
+        "201":
+          description: Ссылка создана
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  shareUrl:
+                    type: string
+                    description: Относительный путь для ссылки
+                    example: "/s/Xt7kQ9wR2mNpL4vB3cYjH8fA6dE1gU5s"
+                  token:
+                    type: string
+                    description: Токен снимка (можно использовать для прямого доступа)
+                    example: "Xt7kQ9wR2mNpL4vB3cYjH8fA6dE1gU5s"
+        "403":
+          description: Нет доступа
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Чат не найден
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      summary: Отозвать все ссылки на чат
+      tags: [Share]
+      description: |
+        Деактивирует ВСЕ активные ссылки для указанного чата.
+        После этого `GET /api/s/{token}/` будет возвращать 404.
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - chatId
+              properties:
+                chatId:
+                  type: string
+                  description: Обфусцированный ID чата
+                  example: "aB3dE5fG7hJ9kL1mN"
+      responses:
+        "200":
+          description: Ссылки отозваны
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        "404":
+          description: Активные ссылки не найдены
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ─────────────────────────────────────────────
+  # GET /api/s/{token}/ — публичный просмотр
+  # ─────────────────────────────────────────────
+  /api/s/{token}/:
+    get:
+      summary: Публичный просмотр снимка чата (без авторизации)
+      tags: [Share]
+      description: |
+        Возвращает снимок чата по токену. **Авторизация НЕ требуется.**
+
+        Ссылка работает пока владелец не отзовёт её через `DELETE /api/chat/share/`.
+        Снимок «заморожен» — изменения в оригинальном чате не влияют.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Токен снимка из shareUrl
+          example: "Xt7kQ9wR2mNpL4vB3cYjH8fA6dE1gU5s"
+      responses:
+        "200":
+          description: Снимок чата
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  title:
+                    type: string
+                    description: Название чата на момент создания снимка
+                    example: "Привет!"
+                  createdAt:
+                    type: string
+                    format: date-time
+                    description: Когда был создан снимок
+                    example: "2026-02-18T12:00:00.000000Z"
+                  messages:
+                    type: array
+                    description: Сообщения активной ветки на момент снимка
+                    items:
+                      type: object
+                      properties:
+                        uid:
+                          type: string
+                          example: "uid-user-1"
+                        role:
+                          type: string
+                          enum: [user, assistant]
+                          example: "user"
+                        content:
+                          type: string
+                          example: "Привет!"
+                        createdAt:
+                          type: string
+                          format: date-time
+                          example: "2026-02-18T12:00:00.000000Z"
+              example:
+                title: "Привет!"
+                createdAt: "2026-02-18T12:00:00.000000Z"
+                messages:
+                  - uid: "uid-user-1"
+                    role: "user"
+                    content: "Привет!"
+                    createdAt: "2026-02-18T12:00:00.000000Z"
+                  - uid: "uid-assistant-1"
+                    role: "assistant"
+                    content: "Привет! Чем могу помочь?"
+                    createdAt: "2026-02-18T12:00:01.000000Z"
+        "404":
+          description: Снимок не найден или отозван
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "Shared chat not found"

@@ -13,9 +13,25 @@ class Message(models.Model):
     chat_session = models.ForeignKey(
         "ChatSessions.ChatSession", on_delete=models.CASCADE, related_name="messages"
     )
+    parent = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="children",
+    )
+    active_child = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
     role = models.CharField(max_length=10, choices=ROLE_CHOICES)
     content = models.TextField()
     version = models.IntegerField(default=1)
+    current_version = models.IntegerField(default=1)
+    total_versions = models.IntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

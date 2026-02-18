@@ -15,6 +15,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from apps.ChatSessions.models import ChatSession
+from apps.messages.models import Message
 from service.obfuscation import Abfuscator
 from .services import ChatService
 
@@ -126,6 +127,18 @@ class PersistentChatMessagesView(views.APIView):
             ip = request.META.get("REMOTE_ADDR")
         return ip
     
+    @staticmethod
+    def _resolve_parent(parent_id, chat_session):
+        """Resolve parent message from parentId or fall back to current_node."""
+        if parent_id:
+            try:
+                return Message.objects.get(uid=parent_id, chat_session=chat_session)
+            except Message.DoesNotExist:
+                return None
+        if chat_session.current_node:
+            return chat_session.current_node
+        return None
+
     def post(self, request):
         """
         Отправляет сообщение и стримит ответ через активное SSE соединение
@@ -134,10 +147,12 @@ class PersistentChatMessagesView(views.APIView):
             - sessionId: ID SSE сессии (обязательно)
             - content: Текст сообщения (обязательно)
             - chatId: ID чата (опционально, для продолжения чата)
+            - parentId: uid родительского сообщения (опционально)
         """
         session_id = request.data.get("sessionId")
         content = request.data.get("content")
         chat_id = request.data.get("chatId")
+        parent_id = request.data.get("parentId")
         
         if not session_id:
             return Response(
@@ -218,8 +233,11 @@ class PersistentChatMessagesView(views.APIView):
                 salt=settings.ABFUSCATOR_ID_KEY, value=chat_session.id, min_length=17
             )
             
+            # Resolve parent message for branching
+            parent_message = self._resolve_parent(parent_id, chat_session)
+            
             # Сохраняем сообщение пользователя
-            user_message = ChatService.add_message(chat_session, "user", content)
+            user_message = ChatService.add_message(chat_session, "user", content, parent=parent_message)
             user_message_id = user_message.uid
         else:
             # Авторизованный пользователь
@@ -248,8 +266,11 @@ class PersistentChatMessagesView(views.APIView):
                 salt=settings.ABFUSCATOR_ID_KEY, value=db_chat_id, min_length=17
             )
             
+            # Resolve parent message for branching
+            parent_message = self._resolve_parent(parent_id, chat_session)
+            
             # Сохраняем сообщение пользователя
-            user_message = ChatService.add_message(chat_session, "user", content)
+            user_message = ChatService.add_message(chat_session, "user", content, parent=parent_message)
             user_message_id = user_message.uid
         
         # Отправляем подтверждение о создании сообщения через SSE
@@ -260,7 +281,10 @@ class PersistentChatMessagesView(views.APIView):
             "role": "user",
             "content": content,
             "v": "1",
-            "isTemporary": False
+            "isTemporary": False,
+            "parentId": user_message.parent.uid if user_message.parent else None,
+            "currentVersion": user_message.current_version,
+            "totalVersions": user_message.total_versions,
         })
         
         # Отправляем loading-start
@@ -275,7 +299,8 @@ class PersistentChatMessagesView(views.APIView):
             try:
                 # Используем существующий сервис для генерации
                 stream = ChatService.process_chat_stream(
-                    user, db_chat_id, content, ip_address, is_temporary
+                    user, db_chat_id, content, ip_address, is_temporary,
+                    parent_message=user_message,
                 )
                 
                 for chunk in stream:
@@ -309,5 +334,8 @@ class PersistentChatMessagesView(views.APIView):
             "messageId": user_message_id,
             "chatId": public_chat_id,
             "isTemporary": is_temporary,
-            "status": "processing"
+            "status": "processing",
+            "parentId": user_message.parent.uid if user_message.parent else None,
+            "currentVersion": user_message.current_version,
+            "totalVersions": user_message.total_versions,
         })
