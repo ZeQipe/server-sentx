@@ -1001,7 +1001,8 @@ class SwitchBranchView(views.APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         chat_id = serializer.validated_data["chatId"]  # deobfuscated
-        message_id = serializer.validated_data["messageId"]
+        parent_id = serializer.validated_data["parentId"]
+        new_version = serializer.validated_data["newVersion"]
 
         user = request.user if request.user.is_authenticated else None
 
@@ -1022,15 +1023,29 @@ class SwitchBranchView(views.APIView):
         except ChatSession.DoesNotExist:
             return Response({"error": "Chat session not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        # Verify that the target message belongs to this session
-        if not Message.objects.filter(uid=message_id, chat_session=chat_session).exists():
-            return Response({"error": "Message not found in this chat"}, status=status.HTTP_404_NOT_FOUND)
+        # Resolve parent message
+        try:
+            parent_message = Message.objects.get(uid=parent_id, chat_session=chat_session)
+        except Message.DoesNotExist:
+            return Response({"error": "Parent message not found in this chat"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Get all siblings (children of parent) sorted by created_at
+        siblings = list(parent_message.children.order_by("created_at"))
+
+        if not siblings:
+            return Response({"error": "No branches found for this message"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Validate newVersion against actual count
+        if new_version > len(siblings):
+            return Response(
+                {"error": f"newVersion={new_version} exceeds total branches={len(siblings)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        target_message = siblings[new_version - 1]
 
         # Perform the switch
-        try:
-            branch = ChatService.switch_branch(chat_session, message_id)
-        except Message.DoesNotExist:
-            return Response({"error": "Target message not found"}, status=status.HTTP_404_NOT_FOUND)
+        branch = ChatService.switch_branch(chat_session, target_message)
 
         public_chat_id = Abfuscator.encode(
             salt=settings.ABFUSCATOR_ID_KEY, value=chat_session.id, min_length=17

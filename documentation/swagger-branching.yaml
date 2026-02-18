@@ -108,16 +108,25 @@ components:
       type: object
       required:
         - chatId
-        - messageId
+        - parentId
+        - newVersion
       properties:
         chatId:
           type: string
           description: Обфусцированный ID чата
           example: "aB3dE5fG7hJ9kL1mN"
-        messageId:
+        parentId:
           type: string
-          description: uid sibling-сообщения, на которое переключаемся
-          example: "uid-user-v2"
+          description: uid родительского сообщения, чьих детей (братьев) переключаем
+          example: "uid-user-1"
+        newVersion:
+          type: integer
+          minimum: 1
+          description: |
+            Номер ветки (1-based). Братья сортируются по дате создания,
+            newVersion — порядковый номер нужного брата.
+            Не может быть <= 0 и > totalVersions.
+          example: 2
 
     # ─── Response schemas ───
 
@@ -651,10 +660,16 @@ paths:
         Вызывается когда пользователь нажимает «<» / «>» в навигации «< 2/3 >».
 
         **Логика:**
-        1. Находит сообщение по `messageId`, проверяет принадлежность чату.
-        2. Обновляет `target.parent.active_child = target`.
-        3. Идёт вниз по `active_child` до листа → обновляет `current_node`.
-        4. Возвращает полный массив сообщений новой ветки.
+        1. Находит родительское сообщение по `parentId`.
+        2. Получает всех его детей (братьев), сортирует по `created_at`.
+        3. Берёт брата по индексу `newVersion - 1`.
+        4. Обновляет `parent.active_child = target`.
+        5. Идёт вниз по `active_child` до листа → обновляет `current_node`.
+        6. Возвращает полный массив сообщений новой ветки.
+
+        **Валидация `newVersion`:**
+        - Не может быть <= 0 (min_value=1 на уровне сериализатора).
+        - Не может быть > количества братьев (проверяется на бэке).
 
         Формат ответа идентичен `GET /api/chat/history`.
       security:
@@ -668,7 +683,8 @@ paths:
               $ref: "#/components/schemas/SwitchBranchRequest"
             example:
               chatId: "aB3dE5fG7hJ9kL1mN"
-              messageId: "uid-user-v2"
+              parentId: "uid-user-1"
+              newVersion: 2
       responses:
         "200":
           description: Ветка переключена

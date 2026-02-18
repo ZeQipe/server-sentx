@@ -216,22 +216,19 @@ class ChatService:
 
     @staticmethod
     @transaction.atomic
-    def switch_branch(chat_session: ChatSession, target_message_uid: str) -> list[Message]:
+    def switch_branch(chat_session: ChatSession, target: Message) -> list[Message]:
         """
-        Switch the active branch to the sibling identified by *target_message_uid*.
+        Switch the active branch to *target* sibling message.
 
         1. Update parent.active_child to target.
         2. Walk down via active_child to the leaf.
         3. Set chat_session.current_node = leaf.
         4. Return the new active branch.
         """
-        target = Message.objects.select_related("parent").get(
-            uid=target_message_uid, chat_session=chat_session
-        )
-
         if target.parent is not None:
-            target.parent.active_child = target
-            target.parent.save(update_fields=["active_child"])
+            parent = target.parent if hasattr(target, '_parent_cache') else Message.objects.get(pk=target.parent_id)
+            parent.active_child = target
+            parent.save(update_fields=["active_child"])
 
         node = target
         while node.active_child is not None:

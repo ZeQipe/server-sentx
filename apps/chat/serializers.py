@@ -65,7 +65,8 @@ class SwitchBranchRequestSerializer(serializers.Serializer):
     """Serializer for switch-branch request (POST /chat/switch-branch/)"""
 
     chatId = ObfuscatedIDField(required=True)
-    messageId = serializers.CharField(required=True)
+    parentId = serializers.CharField(required=True)
+    newVersion = serializers.IntegerField(required=True, min_value=1)
 
 
 class RegenerationRequestSerializer(serializers.Serializer):

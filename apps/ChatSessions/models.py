@@ -21,7 +21,7 @@ class ChatSession(models.Model):
     )
     title = models.CharField(max_length=5000, blank=True, null=True)
     current_node = models.ForeignKey(
-        "messages.Message",
+        "chat_messages.Message",
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
