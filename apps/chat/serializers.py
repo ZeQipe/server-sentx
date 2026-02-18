@@ -7,7 +7,7 @@ class SendMessageRequestSerializer(serializers.Serializer):
 
     content = serializers.CharField(required=True, allow_blank=False)
     chatId = ObfuscatedIDField(required=False, allow_null=True)
-    parentId = serializers.CharField(required=False, allow_null=True, default=None)
+    editMessageId = serializers.CharField(required=False, allow_null=True, default=None)
 
     def validate_content(self, value):
         """Validate that content is not empty"""
@@ -65,7 +65,7 @@ class SwitchBranchRequestSerializer(serializers.Serializer):
     """Serializer for switch-branch request (POST /chat/switch-branch/)"""
 
     chatId = ObfuscatedIDField(required=True)
-    parentId = serializers.CharField(required=True)
+    parentId = serializers.CharField(required=False, allow_null=True, default=None)
     newVersion = serializers.IntegerField(required=True, min_value=1)
 
 

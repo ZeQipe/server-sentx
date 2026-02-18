@@ -8,8 +8,9 @@ info:
     и на активного потомка (`active_child`). Сессия чата хранит указатель на текущий
     лист дерева (`current_node`), определяющий отображаемую ветку.
 
-    Фронт всегда отправляет `parentId` с каждым запросом — это однозначно определяет
-    точку ветвления без рассинхронизации.
+    При редактировании сообщения фронт отправляет `editMessageId` (uid редактируемого
+    сообщения). Бэк сам определяет parent — это parent того сообщения, которое
+    редактируется. Если `editMessageId` не передан — это обычное продолжение диалога.
 
     **Новые поля во всех ответах/SSE с сообщениями:**
     - `parentId` — uid родителя (null для корневого)
@@ -66,13 +67,15 @@ components:
           type: string
           description: ID SSE-сессии
           example: "550e8400-e29b-41d4-a716-446655440000"
-        parentId:
+        editMessageId:
           type: string
           nullable: true
           description: |
-            **[НОВОЕ]** uid родительского сообщения для ветвления.
-            - Передан — сообщение прикрепляется к указанному parent.
-            - Не передан / null, чат существует — parent = current_node сессии.
+            **[НОВОЕ]** uid сообщения, которое редактируется.
+            - Передан — бэк находит это сообщение, берёт его parent и создаёт
+              нового брата (sibling) с тем же parent → ветвление.
+            - Не передан / null, чат существует — обычное продолжение,
+              parent = current_node сессии.
             - Нет chatId — parent = null (первое сообщение нового чата).
           example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 
@@ -108,7 +111,6 @@ components:
       type: object
       required:
         - chatId
-        - parentId
         - newVersion
       properties:
         chatId:
@@ -117,7 +119,11 @@ components:
           example: "aB3dE5fG7hJ9kL1mN"
         parentId:
           type: string
-          description: uid родительского сообщения, чьих детей (братьев) переключаем
+          nullable: true
+          description: |
+            uid родительского сообщения, чьих детей (братьев) переключаем.
+            null — переключение между корневыми сообщениями (первое сообщение чата
+            и его ветки, у которых parent = null).
           example: "uid-user-1"
         newVersion:
           type: integer
@@ -383,9 +389,9 @@ paths:
         - Ответ содержит `parentId`, `currentVersion`, `totalVersions`.
         - SSE user message и assistant chunks содержат эти же поля.
 
-        **Логика parentId:**
-        - Передан → parent = сообщение с этим uid.
-        - Не передан, чат существует → parent = current_node сессии.
+        **Логика editMessageId:**
+        - Передан → бэк находит сообщение по uid, берёт его parent → создаёт sibling.
+        - Не передан / null, чат существует → обычное продолжение, parent = current_node.
         - Новый чат → parent = null.
       security:
         - bearerAuth: []
@@ -398,39 +404,38 @@ paths:
               $ref: "#/components/schemas/SendMessageRequest"
             examples:
               new_chat:
-                summary: Новый чат (первое сообщение, parentId не нужен)
+                summary: Новый чат (первое сообщение)
                 value:
                   content: "Привет!"
                   sessionId: "550e8400-e29b-41d4-a716-446655440000"
               continue:
-                summary: Продолжение чата (parentId не указан → parent = current_node)
+                summary: Продолжение чата (editMessageId не указан → parent = current_node)
                 value:
                   content: "Расскажи подробнее"
                   chatId: "aB3dE5fG7hJ9kL1mN"
                   sessionId: "550e8400-e29b-41d4-a716-446655440000"
-              edit_message:
+              edit_first_message:
                 summary: |
-                  Редактирование сообщения пользователя.
-                  parentId = parent РЕДАКТИРУЕМОГО сообщения (не само сообщение).
-                  Например: K1(parentId=null) → A1 → K2 → A2.
-                  Пользователь редактирует K1 → parentId = null (parent K1).
-                  Создаётся K1' как sibling K1, затем генерируется A1'.
+                  Редактирование ПЕРВОГО сообщения чата.
+                  K1 → A1 → K2 → A2.
+                  Пользователь редактирует K1 → editMessageId = K1.uid.
+                  Бэк: K1.parent = null → создаёт K1' (sibling K1) с parent=null.
                 value:
                   content: "Привет, расскажи про Python!"
                   chatId: "aB3dE5fG7hJ9kL1mN"
                   sessionId: "550e8400-e29b-41d4-a716-446655440000"
-                  parentId: null
-              edit_message_deep:
+                  editMessageId: "uid-of-K1-message"
+              edit_deep_message:
                 summary: |
                   Редактирование НЕ первого сообщения.
-                  K1 → A1 → K2(parentId=A1.uid) → A2.
-                  Пользователь редактирует K2 → parentId = A1.uid.
-                  Создаётся K2' как sibling K2, генерируется A2'.
+                  K1 → A1 → K2 → A2.
+                  Пользователь редактирует K2 → editMessageId = K2.uid.
+                  Бэк: K2.parent = A1 → создаёт K2' (sibling K2) с parent=A1.
                 value:
                   content: "Переформулирую вопрос..."
                   chatId: "aB3dE5fG7hJ9kL1mN"
                   sessionId: "550e8400-e29b-41d4-a716-446655440000"
-                  parentId: "uid-of-A1-message"
+                  editMessageId: "uid-of-K2-message"
       responses:
         "200":
           description: Сообщение создано
@@ -823,26 +828,22 @@ paths:
                     data: {"messageId":"uid-assistant-NEW","chatId":"aB3dE5fG7hJ9kL1mN","role":"assistant","content":"Здравствуйте!","v":"1","parentId":"uid-user-1","currentVersion":3,"totalVersions":3,"resolveMessage":false}
 
   # ─────────────────────────────────────────────
-  # POST /api/chat/share/ — создать ссылку
+  # POST /api/chat/share/ — получить/создать ссылку
+  # DELETE /api/chat/share/ — отозвать ВСЕ ссылки чата
   # ─────────────────────────────────────────────
   /api/chat/share/:
     post:
-      summary: Создать публичную ссылку на снимок чата
+      summary: Получить или создать публичную ссылку на снимок чата
       tags: [Share]
       description: |
-        Создаёт снимок активной ветки чата и возвращает публичную ссылку.
+        Создаёт снимок активной ветки чата и возвращает токен.
 
-        **Снимок** — JSON массив сообщений активной ветки на момент вызова.
-        Дальнейшие изменения в чате НЕ отражаются в снимке.
-        Для обновления — удалите старую ссылку и создайте новую.
+        **Дедупликация:** если для данного чата уже существует активный снапшот
+        с идентичным содержимым — возвращается существующий токен (200),
+        новый НЕ создаётся. Если содержимое ветки изменилось — создаётся
+        новый снапшот (201).
 
-        **Кнопка «Поделиться» на фронте:**
-        1. Вызвать `POST /api/chat/share/` с `chatId`.
-        2. Получить `shareUrl` (например `/s/abc123token`).
-        3. Составить полный URL: `https://sentx.ai/s/abc123token`.
-        4. Показать пользователю / скопировать в буфер.
-
-        Можно создать несколько ссылок для одного чата (каждая — свой снимок).
+        **Фронт формирует ссылку самостоятельно:** `https://sentx.ai/share/{token}`
       security:
         - bearerAuth: []
         - {}
@@ -860,8 +861,8 @@ paths:
                   description: Обфусцированный ID чата
                   example: "aB3dE5fG7hJ9kL1mN"
       responses:
-        "201":
-          description: Ссылка создана
+        "200":
+          description: Вернул существующий снапшот (содержимое не изменилось)
           content:
             application/json:
               schema:
@@ -869,11 +870,22 @@ paths:
                 properties:
                   shareUrl:
                     type: string
-                    description: Относительный путь для ссылки
-                    example: "/s/Xt7kQ9wR2mNpL4vB3cYjH8fA6dE1gU5s"
+                    example: "/share/Xt7kQ9wR2mNpL4vB3cYjH8fA6dE1gU5s"
                   token:
                     type: string
-                    description: Токен снимка (можно использовать для прямого доступа)
+                    example: "Xt7kQ9wR2mNpL4vB3cYjH8fA6dE1gU5s"
+        "201":
+          description: Создан новый снапшот
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  shareUrl:
+                    type: string
+                    example: "/share/Xt7kQ9wR2mNpL4vB3cYjH8fA6dE1gU5s"
+                  token:
+                    type: string
                     example: "Xt7kQ9wR2mNpL4vB3cYjH8fA6dE1gU5s"
         "403":
           description: Нет доступа
@@ -889,11 +901,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
     delete:
-      summary: Отозвать все ссылки на чат
+      summary: Отозвать ВСЕ ссылки на чат (hard delete)
       tags: [Share]
       description: |
-        Деактивирует ВСЕ активные ссылки для указанного чата.
-        После этого `GET /api/s/{token}/` будет возвращать 404.
+        Удаляет ВСЕ снапшоты (SharedChat) привязанные к указанному чату.
+        Не только активные — вообще все. Hard delete из базы.
+        После этого все ранее выданные ссылки перестают работать (404).
       security:
         - bearerAuth: []
         - {}
@@ -912,7 +925,7 @@ paths:
                   example: "aB3dE5fG7hJ9kL1mN"
       responses:
         "200":
-          description: Ссылки отозваны
+          description: Снапшоты удалены
           content:
             application/json:
               schema:
@@ -921,33 +934,42 @@ paths:
                   success:
                     type: boolean
                     example: true
+                  deleted:
+                    type: integer
+                    description: Количество удалённых снапшотов
+                    example: 3
         "404":
-          description: Активные ссылки не найдены
+          description: Снапшоты не найдены
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
   # ─────────────────────────────────────────────
-  # GET /api/s/{token}/ — публичный просмотр
+  # GET /api/share/{token}/ — публичный просмотр
   # ─────────────────────────────────────────────
-  /api/s/{token}/:
+  /api/share/{token}/:
     get:
-      summary: Публичный просмотр снимка чата (без авторизации)
+      summary: Публичный просмотр снимка чата
       tags: [Share]
       description: |
-        Возвращает снимок чата по токену. **Авторизация НЕ требуется.**
+        Возвращает снимок чата по токену. **Авторизация НЕ обязательна.**
+
+        Если передан JWT или X-Fingerprint-Hash — бэк определяет,
+        является ли текущий пользователь владельцем чата (`isOwner`).
 
         Ссылка работает пока владелец не отзовёт её через `DELETE /api/chat/share/`.
         Снимок «заморожен» — изменения в оригинальном чате не влияют.
-      security: []
+      security:
+        - bearerAuth: []
+        - {}
       parameters:
         - name: token
           in: path
           required: true
           schema:
             type: string
-          description: Токен снимка из shareUrl
+          description: Токен снимка
           example: "Xt7kQ9wR2mNpL4vB3cYjH8fA6dE1gU5s"
       responses:
         "200":
@@ -959,16 +981,19 @@ paths:
                 properties:
                   title:
                     type: string
-                    description: Название чата на момент создания снимка
                     example: "Привет!"
                   createdAt:
                     type: string
                     format: date-time
-                    description: Когда был создан снимок
                     example: "2026-02-18T12:00:00.000000Z"
+                  isOwner:
+                    type: boolean
+                    description: |
+                      true — текущий пользователь является владельцем оригинального чата.
+                      false — не владелец или авторизация не передана.
+                    example: false
                   messages:
                     type: array
-                    description: Сообщения активной ветки на момент снимка
                     items:
                       type: object
                       properties:
@@ -978,17 +1003,16 @@ paths:
                         role:
                           type: string
                           enum: [user, assistant]
-                          example: "user"
                         content:
                           type: string
                           example: "Привет!"
                         createdAt:
                           type: string
                           format: date-time
-                          example: "2026-02-18T12:00:00.000000Z"
               example:
                 title: "Привет!"
                 createdAt: "2026-02-18T12:00:00.000000Z"
+                isOwner: false
                 messages:
                   - uid: "uid-user-1"
                     role: "user"
@@ -1004,5 +1028,71 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-              example:
-                error: "Shared chat not found"
+
+  # ─────────────────────────────────────────────
+  # POST /api/share/{token}/continue/ — продолжить диалог
+  # ─────────────────────────────────────────────
+  /api/share/{token}/continue/:
+    post:
+      summary: Продолжить диалог из снимка
+      tags: [Share]
+      description: |
+        Кнопка «Продолжить диалог» на странице публичного просмотра.
+
+        **Если владелец** (JWT/fingerprint совпадает с владельцем чата):
+        - Возвращает обфусцированный chatId существующего чата.
+        - `isNew: false`.
+
+        **Если не владелец:**
+        - Создаёт новый ChatSession для текущего пользователя.
+        - Копирует сообщения из snapshot в новый чат (линейная цепочка).
+        - Возвращает обфусцированный chatId нового чата.
+        - `isNew: true`.
+
+        Фронт делает редирект на страницу чата с полученным `chatId`.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Токен снимка
+          example: "Xt7kQ9wR2mNpL4vB3cYjH8fA6dE1gU5s"
+      responses:
+        "200":
+          description: Владелец — возвращён существующий чат
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chatId:
+                    type: string
+                    description: Обфусцированный ID чата
+                    example: "aB3dE5fG7hJ9kL1mN"
+                  isNew:
+                    type: boolean
+                    example: false
+        "201":
+          description: Не владелец — создана копия чата
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chatId:
+                    type: string
+                    description: Обфусцированный ID нового чата
+                    example: "zY9xW8vU7tS6rQ5p"
+                  isNew:
+                    type: boolean
+                    example: true
+        "404":
+          description: Снимок не найден
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"

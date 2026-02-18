@@ -58,7 +58,7 @@ class ChatMessagesView(views.APIView):
 
         content = serializer.validated_data["content"]
         chat_id = serializer.validated_data.get("chatId")
-        parent_id = serializer.validated_data.get("parentId")
+        edit_message_id = serializer.validated_data.get("editMessageId")
         session_id = request.data.get("sessionId")  # SSE session ID
         user = request.user if request.user.is_authenticated else None
         ip_address = self.get_client_ip(request)
@@ -120,11 +120,14 @@ class ChatMessagesView(views.APIView):
             
             # Resolve parent message for branching
             parent_message = None
-            if parent_id:
+            if edit_message_id:
                 try:
-                    parent_message = Message.objects.get(uid=parent_id, chat_session=chat_session)
+                    edited_msg = Message.objects.select_related("parent").get(
+                        uid=edit_message_id, chat_session=chat_session
+                    )
+                    parent_message = edited_msg.parent
                 except Message.DoesNotExist:
-                    return Response({"error": "Parent message not found"}, status=status.HTTP_404_NOT_FOUND)
+                    return Response({"error": "Edited message not found"}, status=status.HTTP_404_NOT_FOUND)
             elif chat_session.current_node:
                 parent_message = chat_session.current_node
             
@@ -155,11 +158,14 @@ class ChatMessagesView(views.APIView):
             
             # Resolve parent message for branching
             parent_message = None
-            if parent_id:
+            if edit_message_id:
                 try:
-                    parent_message = Message.objects.get(uid=parent_id, chat_session=chat_session)
+                    edited_msg = Message.objects.select_related("parent").get(
+                        uid=edit_message_id, chat_session=chat_session
+                    )
+                    parent_message = edited_msg.parent
                 except Message.DoesNotExist:
-                    return Response({"error": "Parent message not found"}, status=status.HTTP_404_NOT_FOUND)
+                    return Response({"error": "Edited message not found"}, status=status.HTTP_404_NOT_FOUND)
             elif chat_session.current_node:
                 parent_message = chat_session.current_node
             
@@ -1001,7 +1007,7 @@ class SwitchBranchView(views.APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         chat_id = serializer.validated_data["chatId"]  # deobfuscated
-        parent_id = serializer.validated_data["parentId"]
+        parent_id = serializer.validated_data.get("parentId")
         new_version = serializer.validated_data["newVersion"]
 
         user = request.user if request.user.is_authenticated else None
@@ -1023,14 +1029,17 @@ class SwitchBranchView(views.APIView):
         except ChatSession.DoesNotExist:
             return Response({"error": "Chat session not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        # Resolve parent message
-        try:
-            parent_message = Message.objects.get(uid=parent_id, chat_session=chat_session)
-        except Message.DoesNotExist:
-            return Response({"error": "Parent message not found in this chat"}, status=status.HTTP_404_NOT_FOUND)
-
-        # Get all siblings (children of parent) sorted by created_at
-        siblings = list(parent_message.children.order_by("created_at"))
+        # Get siblings: children of parent, or root messages if parentId is null
+        if parent_id:
+            try:
+                parent_message = Message.objects.get(uid=parent_id, chat_session=chat_session)
+            except Message.DoesNotExist:
+                return Response({"error": "Parent message not found in this chat"}, status=status.HTTP_404_NOT_FOUND)
+            siblings = list(parent_message.children.order_by("created_at"))
+        else:
+            siblings = list(
+                Message.objects.filter(parent=None, chat_session=chat_session).order_by("created_at")
+            )
 
         if not siblings:
             return Response({"error": "No branches found for this message"}, status=status.HTTP_404_NOT_FOUND)
@@ -1115,16 +1124,21 @@ class ShareChatView(views.APIView):
             for msg in branch
         ]
 
+        for existing in SharedChat.objects.filter(chat_session=chat_session, is_active=True):
+            if existing.snapshot == snapshot:
+                return Response(
+                    {"shareUrl": f"/share/{existing.token}", "token": existing.token},
+                    status=status.HTTP_200_OK,
+                )
+
         shared = SharedChat.objects.create(
             chat_session=chat_session,
             title=chat_session.title or "",
             snapshot=snapshot,
         )
 
-        share_url = f"/s/{shared.token}"
-
         return Response(
-            {"shareUrl": share_url, "token": shared.token},
+            {"shareUrl": f"/share/{shared.token}", "token": shared.token},
             status=status.HTTP_201_CREATED,
         )
 
@@ -1155,16 +1169,16 @@ class ShareChatView(views.APIView):
         except ChatSession.DoesNotExist:
             return Response({"error": "Chat session not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        updated = SharedChat.objects.filter(chat_session=chat_session, is_active=True).update(is_active=False)
-        if not updated:
-            return Response({"error": "No active share found"}, status=status.HTTP_404_NOT_FOUND)
+        deleted_count, _ = SharedChat.objects.filter(chat_session=chat_session).delete()
+        if not deleted_count:
+            return Response({"error": "No shares found for this chat"}, status=status.HTTP_404_NOT_FOUND)
 
-        return Response({"success": True}, status=status.HTTP_200_OK)
+        return Response({"success": True, "deleted": deleted_count}, status=status.HTTP_200_OK)
 
 
 class PublicSharedChatView(views.APIView):
     """
-    GET /api/s/{token}/ — публичный просмотр снимка чата (без авторизации)
+    GET /api/share/{token}/ — публичный просмотр снимка чата
     """
 
     permission_classes = [AllowAny]
@@ -1173,15 +1187,93 @@ class PublicSharedChatView(views.APIView):
         from .models import SharedChat
 
         try:
-            shared = SharedChat.objects.get(token=token, is_active=True)
+            shared = SharedChat.objects.select_related(
+                "chat_session__user", "chat_session__anonymous_user"
+            ).get(token=token, is_active=True)
         except SharedChat.DoesNotExist:
             return Response({"error": "Shared chat not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        is_owner = False
+        session = shared.chat_session
+        if request.user.is_authenticated and session.user_id and session.user == request.user:
+            is_owner = True
+        else:
+            fingerprint_hash = request.META.get("HTTP_X_FINGERPRINT_HASH")
+            if fingerprint_hash and session.anonymous_user_id:
+                if session.anonymous_user.fingerprint == fingerprint_hash:
+                    is_owner = True
 
         return Response(
             {
                 "title": shared.title,
                 "createdAt": shared.created_at.isoformat(),
+                "isOwner": is_owner,
                 "messages": shared.snapshot,
             },
             status=status.HTTP_200_OK,
         )
+
+
+class ContinueChatView(views.APIView):
+    """
+    POST /api/share/{token}/continue/
+    Owner  → returns their existing chatId.
+    Others → creates a copy of the snapshot and returns the new chatId.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request, token):
+        from .models import SharedChat
+
+        try:
+            shared = SharedChat.objects.select_related(
+                "chat_session__user", "chat_session__anonymous_user"
+            ).get(token=token, is_active=True)
+        except SharedChat.DoesNotExist:
+            return Response({"error": "Shared chat not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        session = shared.chat_session
+        user = request.user if request.user.is_authenticated else None
+
+        is_owner = False
+        if user and session.user_id and session.user == user:
+            is_owner = True
+        else:
+            fingerprint_hash = request.META.get("HTTP_X_FINGERPRINT_HASH")
+            if fingerprint_hash and session.anonymous_user_id:
+                if session.anonymous_user.fingerprint == fingerprint_hash:
+                    is_owner = True
+
+        if is_owner:
+            public_chat_id = Abfuscator.encode(
+                salt=settings.ABFUSCATOR_ID_KEY, value=session.id, min_length=17
+            )
+            return Response({"chatId": public_chat_id, "isNew": False}, status=status.HTTP_200_OK)
+
+        # Not owner — create a copy
+        if user:
+            new_session = ChatService.create_chat_session(user=user, title=shared.title)
+        else:
+            from apps.anonymousUsageLimits.service import AnonymousUsageLimitService
+
+            ip_address = request.META.get("REMOTE_ADDR", "")
+            fingerprint_hash = request.META.get("HTTP_X_FINGERPRINT_HASH")
+            anonymous_user = AnonymousUsageLimitService.get_or_create_anonymous_usage_limit(
+                ip_address, fingerprint_hash
+            )
+            new_session = ChatService.create_chat_session(anonymous_user=anonymous_user, title=shared.title)
+
+        prev_msg = None
+        for msg_data in shared.snapshot:
+            prev_msg = ChatService.add_message(
+                new_session,
+                msg_data["role"],
+                msg_data["content"],
+                parent=prev_msg,
+            )
+
+        public_chat_id = Abfuscator.encode(
+            salt=settings.ABFUSCATOR_ID_KEY, value=new_session.id, min_length=17
+        )
+        return Response({"chatId": public_chat_id, "isNew": True}, status=status.HTTP_201_CREATED)

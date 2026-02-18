@@ -128,11 +128,14 @@ class PersistentChatMessagesView(views.APIView):
         return ip
     
     @staticmethod
-    def _resolve_parent(parent_id, chat_session):
-        """Resolve parent message from parentId or fall back to current_node."""
-        if parent_id:
+    def _resolve_parent(edit_message_id, chat_session):
+        """Resolve parent message from editMessageId or fall back to current_node."""
+        if edit_message_id:
             try:
-                return Message.objects.get(uid=parent_id, chat_session=chat_session)
+                edited_msg = Message.objects.select_related("parent").get(
+                    uid=edit_message_id, chat_session=chat_session
+                )
+                return edited_msg.parent
             except Message.DoesNotExist:
                 return None
         if chat_session.current_node:
@@ -147,12 +150,12 @@ class PersistentChatMessagesView(views.APIView):
             - sessionId: ID SSE сессии (обязательно)
             - content: Текст сообщения (обязательно)
             - chatId: ID чата (опционально, для продолжения чата)
-            - parentId: uid родительского сообщения (опционально)
+            - editMessageId: uid редактируемого сообщения (опционально)
         """
         session_id = request.data.get("sessionId")
         content = request.data.get("content")
         chat_id = request.data.get("chatId")
-        parent_id = request.data.get("parentId")
+        edit_message_id = request.data.get("editMessageId")
         
         if not session_id:
             return Response(
@@ -234,7 +237,7 @@ class PersistentChatMessagesView(views.APIView):
             )
             
             # Resolve parent message for branching
-            parent_message = self._resolve_parent(parent_id, chat_session)
+            parent_message = self._resolve_parent(edit_message_id, chat_session)
             
             # Сохраняем сообщение пользователя
             user_message = ChatService.add_message(chat_session, "user", content, parent=parent_message)
@@ -267,7 +270,7 @@ class PersistentChatMessagesView(views.APIView):
             )
             
             # Resolve parent message for branching
-            parent_message = self._resolve_parent(parent_id, chat_session)
+            parent_message = self._resolve_parent(edit_message_id, chat_session)
             
             # Сохраняем сообщение пользователя
             user_message = ChatService.add_message(chat_session, "user", content, parent=parent_message)
