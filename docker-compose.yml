@@ -27,7 +27,7 @@ services:
   db:
     image: postgres:15
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data/
     env_file:
@@ -52,6 +52,8 @@ services:
       - .:/app
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres_password@db:5432/sentx
     networks:
       - sentx
     depends_on:
